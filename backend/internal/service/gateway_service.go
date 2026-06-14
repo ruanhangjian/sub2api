@@ -1651,6 +1651,13 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 		return nil, fmt.Errorf("%w supporting model: %s (channel pricing restriction)", ErrNoAvailableAccounts, requestedModel)
 	}
 
+	// SubPilot 外置智能调度：在原生调度之前询问 SubPilot 推荐账号。
+	// 默认 disabled；启用时若 SubPilot 返回合法推荐并全部通过二次校验，则直接使用该账号。
+	// 任何失败（disabled / 超时 / 校验失败）都返回 nil，继续走下面的原生调度（fail-open）。
+	if spResult := s.trySubPilotRecommendForGateway(ctx, groupID, sessionHash, requestedModel, excludedIDs); spResult != nil {
+		return spResult, nil
+	}
+
 	var stickyAccountID int64
 	var stickySource string
 	if prefetch := prefetchedStickyAccountIDFromContext(ctx, groupID); prefetch > 0 {

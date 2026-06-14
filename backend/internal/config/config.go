@@ -806,6 +806,25 @@ type GatewayConfig struct {
 	// UserMessageQueue: 用户消息串行队列配置
 	// 对 role:"user" 的真实用户消息实施账号级串行化 + RPM 自适应延迟
 	UserMessageQueue UserMessageQueueConfig `mapstructure:"user_message_queue"`
+
+	// SubPilot: 外置智能调度 sidecar 接入配置。
+	// 默认 Enabled=false，行为与官方镜像完全一致；启用后在账号选择时调用
+	// SubPilot 获取推荐账号，Sub2API 仍做二次校验，失败自动 fail-open 回原生调度。
+	SubPilot SubPilotConfig `mapstructure:"subpilot"`
+}
+
+// SubPilotConfig 控制外置智能调度 sidecar 的接入行为。
+type SubPilotConfig struct {
+	// Enabled 是否启用 SubPilot 账号推荐。默认 false，关闭时行为与官方镜像一致。
+	Enabled bool `mapstructure:"enabled"`
+	// BaseURL SubPilot 服务地址，如 http://subpilot:8080。
+	BaseURL string `mapstructure:"base_url"`
+	// TimeoutMS 调用 SubPilot /select 的超时（毫秒），默认 80。
+	// 超时即 fail-open，绝不阻塞用户请求。建议 50-150。
+	TimeoutMS int `mapstructure:"timeout_ms"`
+	// FailOpen SubPilot 不可用或返回非法推荐时是否回退原生调度，默认 true。
+	// 设为 false 时会拒绝请求（仅在排障时使用，生产必须 true）。
+	FailOpen bool `mapstructure:"fail_open"`
 }
 
 // GatewayOpenAIHTTP2Config OpenAI HTTP 上游协议配置。
