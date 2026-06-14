@@ -29,6 +29,8 @@ RUN pnpm install --frozen-lockfile
 
 # Copy frontend source and build
 COPY frontend/ ./
+# 前端引用了 docs/legal 下的 markdown 文件（AdminComplianceDialog.vue），需一并复制。
+COPY docs/legal/ /app/docs/legal/
 RUN pnpm run build
 
 # -----------------------------------------------------------------------------
