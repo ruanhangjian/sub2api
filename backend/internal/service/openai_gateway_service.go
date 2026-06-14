@@ -1842,6 +1842,13 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 		return nil, fmt.Errorf("%w supporting model: %s (channel pricing restriction)", ErrNoAvailableAccounts, requestedModel)
 	}
 
+	// SubPilot 外置智能调度：在原生调度之前询问 SubPilot 推荐账号。
+	// 默认 disabled；启用时若 SubPilot 返回合法推荐并全部通过二次校验，则直接使用该账号。
+	// 任何失败都 fail-open 到下面的原生调度。
+	if spResult := s.trySubPilotRecommendForOpenAI(ctx, groupID, sessionHash, requestedModel, excludedIDs); spResult != nil {
+		return spResult, nil
+	}
+
 	cfg := s.schedulingConfig()
 	needsUpstreamCheck := s.needsUpstreamChannelRestrictionCheck(ctx, groupID)
 	var stickyAccountID int64
