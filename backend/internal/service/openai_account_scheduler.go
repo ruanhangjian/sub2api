@@ -1441,6 +1441,10 @@ func (s *OpenAIGatewayService) ReportOpenAIAccountScheduleResult(accountID int64
 		return
 	}
 	scheduler.ReportResult(accountID, success, firstTokenMs)
+	// SubPilot report-failure（best-effort）：失败时通知 SubPilot 更新账号健康状态。
+	if !success {
+		s.reportFailureForOpenAI(accountID)
+	}
 }
 
 func (s *OpenAIGatewayService) RecordOpenAIAccountSwitch() {

@@ -9682,6 +9682,8 @@ func (s *GatewayService) recordUsageCore(ctx context.Context, input *recordUsage
 		writeUsageLogBestEffort(ctx, s.usageLogRepo, usageLog, "service.gateway")
 		logger.LegacyPrintf("service.gateway", "[SIMPLE MODE] Usage recorded (not billed): user=%d, tokens=%d", usageLog.UserID, usageLog.TotalTokens())
 		s.deferredService.ScheduleLastUsedUpdate(account.ID)
+		// SubPilot report-success（best-effort，不阻塞用户请求，失败静默忽略）。
+		s.reportSuccessFromUsageLog(ctx, usageLog, account, account.Platform, 0)
 		return nil
 	}
 
@@ -9710,6 +9712,9 @@ func (s *GatewayService) recordUsageCore(ctx context.Context, input *recordUsage
 		return billingErr
 	}
 	writeUsageLogBestEffort(ctx, s.usageLogRepo, usageLog, "service.gateway")
+
+	// SubPilot report-success（best-effort，不阻塞用户请求，失败静默忽略）。
+	s.reportSuccessFromUsageLog(ctx, usageLog, account, quotaPlatform, 0)
 
 	return nil
 }
