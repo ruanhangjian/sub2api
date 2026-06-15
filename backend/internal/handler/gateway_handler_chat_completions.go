@@ -205,6 +205,7 @@ func (h *GatewayHandler) ChatCompletions(c *gin.Context) {
 			}
 		}
 		account := selection.Account
+		applySubPilotLease(c, selection.SubPilotLeaseID) // 问题1：合并 lease_id 到 ctx
 		setOpsSelectedAccount(c, account.ID, account.Platform)
 
 		// 4. Acquire account concurrency slot

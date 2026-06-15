@@ -95,6 +95,9 @@ func (s *GatewayService) trySubPilotRecommendForGateway(
 		result.ReleaseFunc()
 		return nil
 	}
+	// 问题1：把 SubPilot /select 返回的 lease_id 带回 selection，
+	// 供调用方 handler 写回 ctx，使后续 report 能释放 lease。
+	selection.SubPilotLeaseID = recommend.LeaseID
 	return selection
 }
 
@@ -163,6 +166,8 @@ func (s *OpenAIGatewayService) trySubPilotRecommendForOpenAI(
 		result.ReleaseFunc()
 		return nil
 	}
+	// 问题1：把 SubPilot /select 返回的 lease_id 带回 selection。
+	selection.SubPilotLeaseID = recommend.LeaseID
 	return selection
 }
 
