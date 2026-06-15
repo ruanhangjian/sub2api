@@ -825,6 +825,11 @@ type SubPilotConfig struct {
 	// FailOpen SubPilot 不可用或返回非法推荐时是否回退原生调度，默认 true。
 	// 设为 false 时会拒绝请求（仅在排障时使用，生产必须 true）。
 	FailOpen bool `mapstructure:"fail_open"`
+	// ProbeSecret 是 SubPilot 调用内部 probe endpoint 时需携带的共享密钥
+	// （X-SubPilot-Secret header）。必须与 SubPilot 端 SUB2API_PROBE_SECRET 一致。
+	// 问题6 安全要求：未配置时默认拒绝所有 probe 请求（返回 401），
+	// 生产启用委托探测必须显式配置。
+	ProbeSecret string `mapstructure:"probe_secret"`
 }
 
 // GatewayOpenAIHTTP2Config OpenAI HTTP 上游协议配置。
