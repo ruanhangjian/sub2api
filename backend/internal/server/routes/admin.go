@@ -2,6 +2,10 @@
 package routes
 
 import (
+	"crypto/subtle"
+	"net/http"
+
+	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/handler"
 	"github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
@@ -15,6 +19,7 @@ func RegisterAdminRoutes(
 	h *handler.Handlers,
 	adminAuth middleware.AdminAuthMiddleware,
 	settingService *service.SettingService,
+	cfg *config.Config,
 ) {
 	admin := v1.Group("/admin")
 	admin.Use(gin.HandlerFunc(adminAuth))
@@ -105,11 +110,35 @@ func RegisterAdminRoutes(
 		registerAffiliateRoutes(admin, h)
 	}
 
-	// SubPilot 内部 probe endpoint：不走 admin JWT，依赖 docker 内网隔离。
-	// SubPilot 调此端点探测 ChatGPT/OAuth 账号（复用 Sub2API 的 token 刷新逻辑）。
+	// SubPilot 内部 probe endpoint：共享密钥鉴权（X-SubPilot-Secret header）。
+	// 问题6：不再仅依赖 docker 内网隔离。未配置 probe_secret 时默认拒绝所有请求（401），
+	// 生产启用委托探测必须显式配置 gateway.subpilot.probe_secret，且与 SubPilot 端一致。
 	internalSubPilot := v1.Group("/internal/subpilot")
+	internalSubPilot.Use(subPilotProbeSecretMiddleware(cfg))
 	{
 		internalSubPilot.POST("/probe/:id", h.Admin.Account.SubPilotProbe)
+	}
+}
+
+// subPilotProbeSecretMiddleware 校验 SubPilot 内部 probe endpoint 的共享密钥。
+// 问题6：未配置 secret（空串）时默认拒绝；header 不匹配拒绝。常量时间比较防时序攻击。
+func subPilotProbeSecretMiddleware(cfg *config.Config) gin.HandlerFunc {
+	expected := ""
+	if cfg != nil {
+		expected = cfg.Gateway.SubPilot.ProbeSecret
+	}
+	return func(c *gin.Context) {
+		// 未配置 secret → 默认拒绝（安全：必须显式配置才能启用委托探测）。
+		if expected == "" {
+			c.AbortWithStatus(http.StatusUnauthorized)
+			return
+		}
+		got := c.GetHeader("X-SubPilot-Secret")
+		if subtle.ConstantTimeCompare([]byte(got), []byte(expected)) != 1 {
+			c.AbortWithStatus(http.StatusUnauthorized)
+			return
+		}
+		c.Next()
 	}
 }
 

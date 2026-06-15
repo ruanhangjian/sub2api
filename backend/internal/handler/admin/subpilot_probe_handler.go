@@ -27,7 +27,8 @@ type subPilotProbeResponse struct {
 // headers、平台分发逻辑），通过 httptest 捕获其 SSE 输出的 HTTP 状态码来判断
 // 探测是否成功。SubPilot 用此端点探测 ChatGPT/OAuth 账号，避免自己硬模拟。
 //
-// 鉴权：依赖 docker 内网隔离（SubPilot 与 Sub2API 同 network），不经过 admin JWT。
+// 鉴权：共享密钥（X-SubPilot-Secret header，见 routes/admin.go 的中间件）。
+// 问题6：不再仅依赖 docker 内网隔离；未配置 gateway.subpilot.probe_secret 时默认拒绝。
 // 探测用低 token（model 可选，prompt 固定为短文本）。
 func (h *AccountHandler) SubPilotProbe(c *gin.Context) {
 	if h.accountTestService == nil {
