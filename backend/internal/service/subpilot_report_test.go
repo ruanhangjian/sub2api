@@ -49,6 +49,7 @@ func TestReportSuccessPostsToSubPilot(t *testing.T) {
 		Platform:     "openai",
 		Model:        "gpt-4.1",
 		LatencyMS:    840,
+		FirstTokenMS: 520,
 	})
 
 	if srv.lastPath != "/v1/dispatch/report-success" {
@@ -57,9 +58,9 @@ func TestReportSuccessPostsToSubPilot(t *testing.T) {
 	if srv.lastBody["request_id"] != "req-1" || srv.lastBody["account_id"] != "42" || srv.lastBody["latency_ms"] != float64(840) {
 		t.Fatalf("unexpected body: %+v", srv.lastBody)
 	}
-	// 阶段5 不上报 first_token_ms（留待阶段7），确认 body 里不含该字段。
-	if _, has := srv.lastBody["first_token_ms"]; has {
-		t.Fatalf("stage5 should NOT report first_token_ms, got: %+v", srv.lastBody)
+	// 阶段7：first_token_ms 现在上报（取自 Sub2API 已自算的 usageLog.FirstTokenMs）。
+	if srv.lastBody["first_token_ms"] != float64(520) {
+		t.Fatalf("first_token_ms = %v, want 520: %+v", srv.lastBody["first_token_ms"], srv.lastBody)
 	}
 }
 

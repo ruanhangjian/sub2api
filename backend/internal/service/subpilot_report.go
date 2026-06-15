@@ -163,11 +163,12 @@ func (s *GatewayService) reportSuccessFromUsageLog(ctx context.Context, usageLog
 	if usageLog.GroupID != nil {
 		req.GroupID = strconv.FormatInt(*usageLog.GroupID, 10)
 	}
-	// 阶段5 按要求暂不上报 first_token_ms（留待阶段7 单独验证 SSE 完整性后再开启）。
-	// Sub2API 已在 usageLog.FirstTokenMs 里自算了首字时间，阶段7 只需取消下面注释即可启用：
-	// if usageLog.FirstTokenMs != nil && *usageLog.FirstTokenMs > 0 {
-	//     req.FirstTokenMS = *usageLog.FirstTokenMs
-	// }
+	// first_token_ms 直接取自 Sub2API 已自算的 usageLog.FirstTokenMs。
+	// Sub2API 在 SSE stream reader 第一块有效 data 到达时已记录该值，
+	// 无需 SubPilot 改流式转发逻辑。非流式请求 FirstTokenMs 为 nil，不报。
+	if usageLog.FirstTokenMs != nil && *usageLog.FirstTokenMs > 0 {
+		req.FirstTokenMS = *usageLog.FirstTokenMs
+	}
 	s.reportSuccessToSubPilot(ctx, req)
 }
 
