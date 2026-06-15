@@ -104,6 +104,13 @@ func RegisterAdminRoutes(
 		// 邀请返利（专属用户管理）
 		registerAffiliateRoutes(admin, h)
 	}
+
+	// SubPilot 内部 probe endpoint：不走 admin JWT，依赖 docker 内网隔离。
+	// SubPilot 调此端点探测 ChatGPT/OAuth 账号（复用 Sub2API 的 token 刷新逻辑）。
+	internalSubPilot := v1.Group("/internal/subpilot")
+	{
+		internalSubPilot.POST("/probe/:id", h.Admin.Account.SubPilotProbe)
+	}
 }
 
 func registerAdminComplianceRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
