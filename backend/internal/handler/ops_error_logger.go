@@ -427,6 +427,16 @@ func setOpsSelectedAccount(c *gin.Context, accountID int64, platform ...string) 
 	}
 }
 
+// applySubPilotLease 把 SubPilot /select 返回的 lease_id 合并进 c.Request.Context()。
+// 在账号选择拿到 AccountSelectionResult 后调用，使后续 report-success/report-failure
+// 能携带 lease_id 并释放 lease（问题1）。leaseID 为空时无操作（原生调度路径）。
+func applySubPilotLease(c *gin.Context, leaseID string) {
+	if c == nil || c.Request == nil || leaseID == "" {
+		return
+	}
+	c.Request = c.Request.WithContext(service.WithSubPilotLeaseID(c.Request.Context(), leaseID))
+}
+
 func markOpsRoutingCapacityLimited(c *gin.Context) {
 	if c == nil {
 		return

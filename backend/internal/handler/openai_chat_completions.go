@@ -166,6 +166,7 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 			return
 		}
 		account := selection.Account
+		applySubPilotLease(c, selection.SubPilotLeaseID) // 问题1：合并 lease_id 到 ctx
 		sessionHash = ensureOpenAIPoolModeSessionHash(sessionHash, account)
 		reqLog.Debug("openai_chat_completions.account_selected", zap.Int64("account_id", account.ID), zap.String("account_name", account.Name))
 		_ = scheduleDecision
@@ -217,7 +218,7 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 						h.handleFailoverExhausted(c, failoverErr, true)
 						return
 					}
-					h.gatewayService.ReportOpenAIAccountScheduleResult(account.ID, false, nil)
+					h.gatewayService.ReportOpenAIAccountScheduleResult(account.ID, false, nil, service.SubPilotFailContext{Ctx: c.Request.Context(), GroupID: apiKey.GroupID, Model: reqModel})
 					// Pool mode: retry on the same account
 					if failoverErr.RetryableOnSameAccount {
 						retryLimit := account.GetPoolModeRetryCount()
@@ -257,7 +258,7 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 					)
 					continue
 				}
-				h.gatewayService.ReportOpenAIAccountScheduleResult(account.ID, false, nil)
+				h.gatewayService.ReportOpenAIAccountScheduleResult(account.ID, false, nil, service.SubPilotFailContext{Ctx: c.Request.Context(), GroupID: apiKey.GroupID, Model: reqModel})
 				upstreamErrorAlreadyCommunicated := openAIForwardErrorAlreadyCommunicated(c, writerSizeBeforeForward, err)
 				wroteFallback := false
 				if !upstreamErrorAlreadyCommunicated {
@@ -273,9 +274,9 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 			}
 		}
 		if result != nil {
-			h.gatewayService.ReportOpenAIAccountScheduleResult(account.ID, true, result.FirstTokenMs)
+			h.gatewayService.ReportOpenAIAccountScheduleResult(account.ID, true, result.FirstTokenMs, service.SubPilotFailContext{Ctx: c.Request.Context(), GroupID: apiKey.GroupID, Model: reqModel})
 		} else {
-			h.gatewayService.ReportOpenAIAccountScheduleResult(account.ID, true, nil)
+			h.gatewayService.ReportOpenAIAccountScheduleResult(account.ID, true, nil, service.SubPilotFailContext{Ctx: c.Request.Context(), GroupID: apiKey.GroupID, Model: reqModel})
 		}
 
 		userAgent := c.GetHeader("User-Agent")

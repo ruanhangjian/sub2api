@@ -186,6 +186,7 @@ func (h *OpenAIGatewayHandler) Images(c *gin.Context) {
 		)
 
 		account := selection.Account
+		applySubPilotLease(c, selection.SubPilotLeaseID) // 问题1：合并 lease_id 到 ctx
 		sessionHash = ensureOpenAIPoolModeSessionHash(sessionHash, account)
 		reqLog.Debug("openai.images.account_selected", zap.Int64("account_id", account.ID), zap.String("account_name", account.Name))
 		setOpsSelectedAccount(c, account.ID, account.Platform)
@@ -226,7 +227,7 @@ func (h *OpenAIGatewayHandler) Images(c *gin.Context) {
 			} else {
 				var imageUpstreamErr *service.OpenAIImagesUpstreamError
 				if errors.As(err, &imageUpstreamErr) {
-					h.gatewayService.ReportOpenAIAccountScheduleResult(account.ID, true, nil)
+					h.gatewayService.ReportOpenAIAccountScheduleResult(account.ID, true, nil, service.SubPilotFailContext{Ctx: c.Request.Context(), GroupID: apiKey.GroupID, Model: requestModel})
 					reqLog.Warn("openai.images.upstream_user_error",
 						zap.Int64("account_id", account.ID),
 						zap.Int("status_code", imageUpstreamErr.StatusCode),
@@ -238,7 +239,7 @@ func (h *OpenAIGatewayHandler) Images(c *gin.Context) {
 				}
 				var failoverErr *service.UpstreamFailoverError
 				if errors.As(err, &failoverErr) {
-					h.gatewayService.ReportOpenAIAccountScheduleResult(account.ID, false, nil)
+					h.gatewayService.ReportOpenAIAccountScheduleResult(account.ID, false, nil, service.SubPilotFailContext{Ctx: c.Request.Context(), GroupID: apiKey.GroupID, Model: requestModel})
 					if failoverErr.RetryableOnSameAccount {
 						retryLimit := account.GetPoolModeRetryCount()
 						if sameAccountRetryCount[account.ID] < retryLimit {
@@ -277,7 +278,7 @@ func (h *OpenAIGatewayHandler) Images(c *gin.Context) {
 					)
 					continue
 				}
-				h.gatewayService.ReportOpenAIAccountScheduleResult(account.ID, false, nil)
+				h.gatewayService.ReportOpenAIAccountScheduleResult(account.ID, false, nil, service.SubPilotFailContext{Ctx: c.Request.Context(), GroupID: apiKey.GroupID, Model: requestModel})
 				upstreamErrorAlreadyCommunicated := openAIForwardErrorAlreadyCommunicated(c, writerSizeBeforeForward, err)
 				wroteFallback := false
 				if !upstreamErrorAlreadyCommunicated {
@@ -301,9 +302,9 @@ func (h *OpenAIGatewayHandler) Images(c *gin.Context) {
 			if account.Type == service.AccountTypeOAuth {
 				h.gatewayService.UpdateCodexUsageSnapshotFromHeaders(c.Request.Context(), account.ID, result.ResponseHeaders)
 			}
-			h.gatewayService.ReportOpenAIAccountScheduleResult(account.ID, true, result.FirstTokenMs)
+			h.gatewayService.ReportOpenAIAccountScheduleResult(account.ID, true, result.FirstTokenMs, service.SubPilotFailContext{Ctx: c.Request.Context(), GroupID: apiKey.GroupID, Model: requestModel})
 		} else {
-			h.gatewayService.ReportOpenAIAccountScheduleResult(account.ID, true, nil)
+			h.gatewayService.ReportOpenAIAccountScheduleResult(account.ID, true, nil, service.SubPilotFailContext{Ctx: c.Request.Context(), GroupID: apiKey.GroupID, Model: requestModel})
 		}
 
 		userAgent := c.GetHeader("User-Agent")

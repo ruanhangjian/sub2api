@@ -44,18 +44,32 @@ type subpilotReportFailureRequest struct {
 // 由 select 接入层在选中 SubPilot 推荐账号时写入 ctx。
 type subpilotLeaseCtxKey struct{}
 
-func withSubPilotLeaseID(ctx context.Context, leaseID string) context.Context {
+// WithSubPilotLeaseID 把 SubPilot /select 返回的 lease_id 写入 ctx。
+// handler 在拿到含 SubPilotLeaseID 的 AccountSelectionResult 后应调用本函数
+// 把 lease_id 合并到 c.Request.Context()，使后续 report 能释放 lease（问题1）。
+// leaseID 为空时原样返回 ctx（原生调度路径无 lease）。
+func WithSubPilotLeaseID(ctx context.Context, leaseID string) context.Context {
 	if leaseID == "" {
 		return ctx
 	}
 	return context.WithValue(ctx, subpilotLeaseCtxKey{}, leaseID)
 }
 
-func subPilotLeaseIDFromContext(ctx context.Context) string {
+// SubPilotLeaseIDFromContext 从 ctx 取出 lease_id，缺失返回空串。
+func SubPilotLeaseIDFromContext(ctx context.Context) string {
 	if v, ok := ctx.Value(subpilotLeaseCtxKey{}).(string); ok {
 		return v
 	}
 	return ""
+}
+
+// withSubPilotLeaseID 是 WithSubPilotLeaseID 的包内别名，保持向后兼容。
+func withSubPilotLeaseID(ctx context.Context, leaseID string) context.Context {
+	return WithSubPilotLeaseID(ctx, leaseID)
+}
+
+func subPilotLeaseIDFromContext(ctx context.Context) string {
+	return SubPilotLeaseIDFromContext(ctx)
 }
 
 // reportSuccessToSubPilot 把成功请求结果上报给 SubPilot。best-effort：任何错误都静默忽略，
@@ -122,31 +136,69 @@ func (c *SubPilotClient) reportFailure(ctx context.Context, cfg config.SubPilotC
 	resp.Body.Close()
 }
 
+// SubPilotFailContext 携带失败 report 所需的请求级上下文。
+// 问题5：OpenAI 失败 report 此前缺 group_id/model/lease_id 被 SubPilot 拒绝。
+// handler 在调用 ReportOpenAIAccountScheduleResult 时传入。
+type SubPilotFailContext struct {
+	Ctx     context.Context // 携带 lease_id（由 applySubPilotLease 合并）；为 nil 则跳过 report
+	GroupID *int64          // 分组 ID
+	Model   string          // 请求模型
+}
+
 // reportFailureForOpenAI 是 OpenAIGatewayService 的失败 report 入口。
 // 在 ReportOpenAIAccountScheduleResult(success=false) 时调用，向 SubPilot 上报
 // 该账号本次请求失败。best-effort，任何错误都静默忽略。
-// group_id / request_id 在此调用点不可用（调度结果回写签名很窄），
-// SubPilot 用 account_id 即可更新该账号的健康/冷却状态。
-func (s *OpenAIGatewayService) reportFailureForOpenAI(accountID int64) {
+//
+// 问题5：补齐 group_id/model/lease_id/request_id。
+// 关键约束：只在 lease_id 非空时才 report——lease_id 为空说明该请求不是 SubPilot
+// 推荐的（原生调度失败），不涉及 lease 释放，report 也会被 SubPilot validateReport 拒绝，
+// 故直接跳过（不假装闭环）。
+func (s *OpenAIGatewayService) reportFailureForOpenAI(accountID int64, fail SubPilotFailContext) {
 	sp := subPilotConfig(s.cfg)
 	if !sp.Enabled || sp.BaseURL == "" {
 		return
 	}
-	reportCtx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
-	defer cancel()
-	subPilotClientSingleton.reportFailure(reportCtx, sp, subpilotReportFailureRequest{
-		RequestID:    "openai-schedule-" + strconv.FormatInt(accountID, 10) + "-" + strconv.FormatInt(time.Now().UnixNano(), 10),
+	// 没有 ctx 或 lease_id → 不是 SubPilot 选的请求，跳过（report 会被拒）。
+	var leaseID, requestID string
+	if fail.Ctx != nil {
+		leaseID = subPilotLeaseIDFromContext(fail.Ctx)
+		requestID = requestIDFromContext(fail.Ctx)
+	}
+	if leaseID == "" {
+		return
+	}
+	if requestID == "" {
+		// 兜底：构造一个可追溯的 request_id。
+		requestID = "openai-schedule-" + strconv.FormatInt(accountID, 10) + "-" + strconv.FormatInt(time.Now().UnixNano(), 10)
+	}
+
+	req := subpilotReportFailureRequest{
+		RequestID:    requestID,
+		LeaseID:      leaseID,
 		AccountID:    strconv.FormatInt(accountID, 10),
 		Platform:     platformForSubPilot(PlatformOpenAI),
+		Model:        fail.Model,
 		ErrorCode:    "upstream_error",
 		ErrorMessage: "openai account schedule reported failure",
-	})
+	}
+	if fail.GroupID != nil {
+		req.GroupID = strconv.FormatInt(*fail.GroupID, 10)
+	}
+	reportCtx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+	subPilotClientSingleton.reportFailure(reportCtx, sp, req)
 }
 
 // reportSuccessFromUsageLog 从 recordUsageCore 已构建好的 usageLog + result + account
 // 组装 SubPilot success report。best-effort，任何字段缺失都不报错。
-func (s *GatewayService) reportSuccessFromUsageLog(ctx context.Context, usageLog *UsageLog, account *Account, platform string, officialUSD float64) {
+// 问题5：提取为包级函数，Claude（*GatewayService）和 OpenAI（*OpenAIGatewayService）
+// 共用同一套 success report 组装逻辑。
+func reportSuccessFromUsageLog(cfg *config.Config, ctx context.Context, usageLog *UsageLog, account *Account, platform string, officialUSD float64) {
 	if usageLog == nil || account == nil {
+		return
+	}
+	sp := subPilotConfig(cfg)
+	if !sp.Enabled || sp.BaseURL == "" {
 		return
 	}
 	req := subpilotReportSuccessRequest{
@@ -169,7 +221,20 @@ func (s *GatewayService) reportSuccessFromUsageLog(ctx context.Context, usageLog
 	if usageLog.FirstTokenMs != nil && *usageLog.FirstTokenMs > 0 {
 		req.FirstTokenMS = *usageLog.FirstTokenMs
 	}
-	s.reportSuccessToSubPilot(ctx, req)
+	reportCtx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+	subPilotClientSingleton.reportSuccess(reportCtx, sp, req)
+}
+
+// reportSuccessFromUsageLog 是 Claude/Gemini（*GatewayService）的薄包装，委托给包级函数。
+func (s *GatewayService) reportSuccessFromUsageLog(ctx context.Context, usageLog *UsageLog, account *Account, platform string, officialUSD float64) {
+	reportSuccessFromUsageLog(s.cfg, ctx, usageLog, account, platform, officialUSD)
+}
+
+// reportSuccessFromUsageLogForOpenAI 是 OpenAI（*OpenAIGatewayService）的薄包装。
+// 问题5：OpenAI success 路径此前完全没有 SubPilot 上报，现补齐。
+func (s *OpenAIGatewayService) reportSuccessFromUsageLogForOpenAI(ctx context.Context, usageLog *UsageLog, account *Account, platform string) {
+	reportSuccessFromUsageLog(s.cfg, ctx, usageLog, account, platform, usageLog.TotalCost)
 }
 
 // sanitizeSubPilotErrorMessage 截断并脱敏错误消息：限制长度，移除可能的 key/token 片段。

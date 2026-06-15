@@ -535,6 +535,11 @@ type AccountSelectionResult struct {
 	Acquired    bool
 	ReleaseFunc func()
 	WaitPlan    *AccountWaitPlan // nil means no wait allowed
+	// SubPilotLeaseID 是该次选择由 SubPilot /select 返回的 lease_id（若有）。
+	// 仅当本次选择走了 SubPilot 推荐路径时非空；原生调度路径为空。
+	// 调用方（handler）应据此写回 ctx，使后续 report-success/report-failure 能释放 lease。
+	// 问题1：validateReport 强制要求 lease_id，否则 report 被 SubPilot 拒绝。
+	SubPilotLeaseID string
 }
 
 // ClaudeUsage 表示Claude API返回的usage信息
@@ -8986,7 +8991,9 @@ func (s *GatewayService) recordUsageCore(ctx context.Context, input *recordUsage
 		logger.LegacyPrintf("service.gateway", "[SIMPLE MODE] Usage recorded (not billed): user=%d, tokens=%d", usageLog.UserID, usageLog.TotalTokens())
 		s.deferredService.ScheduleLastUsedUpdate(account.ID)
 		// SubPilot report-success（best-effort，不阻塞用户请求，失败静默忽略）。
-		s.reportSuccessFromUsageLog(ctx, usageLog, account, account.Platform, 0)
+		// 问题7：official_usd_used 传 usageLog.TotalCost（官方美元额度，pre-markup），
+		// 而非固定 0。TotalCost 是按官方 per-token 费率算出的 USD，非人民币成本。
+		s.reportSuccessFromUsageLog(ctx, usageLog, account, account.Platform, usageLog.TotalCost)
 		return nil
 	}
 
@@ -9017,7 +9024,8 @@ func (s *GatewayService) recordUsageCore(ctx context.Context, input *recordUsage
 	writeUsageLogBestEffort(ctx, s.usageLogRepo, usageLog, "service.gateway")
 
 	// SubPilot report-success（best-effort，不阻塞用户请求，失败静默忽略）。
-	s.reportSuccessFromUsageLog(ctx, usageLog, account, quotaPlatform, 0)
+	// 问题7：official_usd_used 传 usageLog.TotalCost（官方美元额度）。
+	s.reportSuccessFromUsageLog(ctx, usageLog, account, quotaPlatform, usageLog.TotalCost)
 
 	return nil
 }
