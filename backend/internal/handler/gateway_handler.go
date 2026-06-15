@@ -338,6 +338,7 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 				}
 			}
 			account := selection.Account
+			applySubPilotLease(c, selection.SubPilotLeaseID) // 问题1：合并 lease_id 到 ctx
 			setOpsSelectedAccount(c, account.ID, account.Platform)
 
 			// 检查请求拦截（预热请求、SUGGESTION MODE等）
@@ -624,6 +625,7 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 				}
 			}
 			account := selection.Account
+			applySubPilotLease(c, selection.SubPilotLeaseID) // 问题1：合并 lease_id 到 ctx
 			setOpsSelectedAccount(c, account.ID, account.Platform)
 
 			// [DEBUG-STICKY] 打印账号选择结果

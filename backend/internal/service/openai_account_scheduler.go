@@ -1435,15 +1435,19 @@ func (s *OpenAIGatewayService) isOpenAIAccountTransportCompatible(account *Accou
 	return s.getOpenAIWSProtocolResolver().Resolve(account).Transport == requiredTransport
 }
 
-func (s *OpenAIGatewayService) ReportOpenAIAccountScheduleResult(accountID int64, success bool, firstTokenMs *int) {
+// ReportOpenAIAccountScheduleResult 上报账号调度结果。
+// fail 携带 SubPilot 失败 report 所需的请求级上下文（ctx/groupID/model）；
+// 问题5：OpenAI 失败 report 补齐 group_id/model/lease_id。
+// fail.Ctx 为 nil 或不含 lease_id 时跳过 SubPilot report（非 SubPilot 选的请求）。
+func (s *OpenAIGatewayService) ReportOpenAIAccountScheduleResult(accountID int64, success bool, firstTokenMs *int, fail SubPilotFailContext) {
 	scheduler := s.getOpenAIAccountScheduler(context.Background())
 	if scheduler == nil {
 		return
 	}
 	scheduler.ReportResult(accountID, success, firstTokenMs)
-	// SubPilot report-failure（best-effort）：失败时通知 SubPilot 更新账号健康状态。
+	// SubPilot report-failure（best-effort）：失败时通知 SubPilot 更新账号健康状态并释放 lease。
 	if !success {
-		s.reportFailureForOpenAI(accountID)
+		s.reportFailureForOpenAI(accountID, fail)
 	}
 }
 

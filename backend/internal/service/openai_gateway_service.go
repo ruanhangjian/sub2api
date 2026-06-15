@@ -6570,6 +6570,13 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 	}
 	writeUsageLogBestEffort(ctx, s.usageLogRepo, usageLog, "service.openai_gateway")
 
+	// 问题5：OpenAI success 路径此前完全没有 SubPilot 上报，现补齐。
+	// best-effort：失败静默忽略，绝不影响用户请求。lease_id 从 ctx 取（handler 已合并）。
+	// official_usd_used 取 usageLog.TotalCost（问题7）。
+	if account != nil {
+		s.reportSuccessFromUsageLogForOpenAI(ctx, usageLog, account, PlatformFromAPIKey(apiKey))
+	}
+
 	return nil
 }
 
