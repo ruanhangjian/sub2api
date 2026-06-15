@@ -1,5 +1,6 @@
 docs/claude-relay-service/
 .codex
+.worktrees/
 
 # ===================
 # Go 后端
