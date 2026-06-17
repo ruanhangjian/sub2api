@@ -16,6 +16,7 @@ type subPilotProbeResponse struct {
 	Success      bool   `json:"success"`
 	AccountID    int64  `json:"account_id"`
 	LatencyMS    int64  `json:"latency_ms"`
+	ModelID      string `json:"model_id,omitempty"`
 	ErrorMessage string `json:"error_message,omitempty"`
 }
 
@@ -71,6 +72,7 @@ func (h *AccountHandler) SubPilotProbe(c *gin.Context) {
 	result := subPilotProbeResponse{
 		AccountID: accountID,
 		LatencyMS: latency,
+		ModelID:   req.ModelID,
 	}
 
 	// 判断成功：TestAccountConnection 成功时 recorder 状态码为 200 且有 body 输出。
