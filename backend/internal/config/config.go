@@ -1845,6 +1845,11 @@ func setDefaults() {
 	viper.SetDefault("gateway.force_codex_cli", false)
 	viper.SetDefault("gateway.codex_image_generation_bridge_enabled", false)
 	viper.SetDefault("gateway.openai_passthrough_allow_timeout_headers", false)
+	viper.SetDefault("gateway.subpilot.enabled", false)
+	viper.SetDefault("gateway.subpilot.base_url", "")
+	viper.SetDefault("gateway.subpilot.timeout_ms", 80)
+	viper.SetDefault("gateway.subpilot.fail_open", true)
+	viper.SetDefault("gateway.subpilot.probe_secret", "")
 	// OpenAI Responses WebSocket（默认开启；可通过 force_http 紧急回滚）
 	viper.SetDefault("gateway.openai_ws.enabled", true)
 	viper.SetDefault("gateway.openai_ws.mode_router_v2_enabled", false)

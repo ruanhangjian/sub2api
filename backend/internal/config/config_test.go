@@ -216,6 +216,23 @@ func TestLoadOpenAIResponseHeaderTimeoutFromEnv(t *testing.T) {
 	require.Equal(t, 1800, cfg.Gateway.OpenAIResponseHeaderTimeout)
 }
 
+func TestLoadSubPilotConfigFromEnv(t *testing.T) {
+	resetViperWithJWTSecret(t)
+	t.Setenv("GATEWAY_SUBPILOT_ENABLED", "true")
+	t.Setenv("GATEWAY_SUBPILOT_BASE_URL", "http://subpilot:8080")
+	t.Setenv("GATEWAY_SUBPILOT_TIMEOUT_MS", "120")
+	t.Setenv("GATEWAY_SUBPILOT_FAIL_OPEN", "true")
+	t.Setenv("GATEWAY_SUBPILOT_PROBE_SECRET", "probe-secret")
+
+	cfg, err := Load()
+	require.NoError(t, err)
+	require.True(t, cfg.Gateway.SubPilot.Enabled)
+	require.Equal(t, "http://subpilot:8080", cfg.Gateway.SubPilot.BaseURL)
+	require.Equal(t, 120, cfg.Gateway.SubPilot.TimeoutMS)
+	require.True(t, cfg.Gateway.SubPilot.FailOpen)
+	require.Equal(t, "probe-secret", cfg.Gateway.SubPilot.ProbeSecret)
+}
+
 func TestLoadOpenAIWSStickyTTLCompatibility(t *testing.T) {
 	resetViperWithJWTSecret(t)
 	t.Setenv("GATEWAY_OPENAI_WS_STICKY_RESPONSE_ID_TTL_SECONDS", "0")
