@@ -123,10 +123,10 @@ func TestReportSuccessDoesNotBlock(t *testing.T) {
 // TestSanitizeSubPilotErrorMessageRedactsKeys 证明错误消息里的 key/token 被脱敏。
 func TestSanitizeSubPilotErrorMessageRedactsKeys(t *testing.T) {
 	cases := map[string]string{
-		"auth failed: sk-abc123secret":           "auth failed: [redacted]",
-		"Bearer eyJhbG token here":               "[redacted]",
-		"error: api_key=secret_value":            "error: [redacted]",
-		"normal error without keys":              "normal error without keys",
+		"auth failed: sk-abc123secret": "auth failed: [redacted]",
+		"Bearer eyJhbG token here":     "[redacted]",
+		"error: api_key=secret_value":  "error: [redacted]",
+		"normal error without keys":    "normal error without keys",
 	}
 	for in, want := range cases {
 		got := sanitizeSubPilotErrorMessage(in)
@@ -176,10 +176,10 @@ func TestReportSuccessCarriesLeaseIDFromContext(t *testing.T) {
 
 	groupID := int64(6)
 	usageLog := &UsageLog{
-		RequestID:    "req-lease-1",
-		GroupID:      &groupID,
-		Model:        "gpt-4.1",
-		TotalCost:    0.0123,
+		RequestID: "req-lease-1",
+		GroupID:   &groupID,
+		Model:     "gpt-4.1",
+		TotalCost: 0.0123,
 	}
 	account := &Account{ID: 42}
 
@@ -215,6 +215,37 @@ func TestReportSuccessOpenAIIncludesFirstTokenMs(t *testing.T) {
 
 	if srv.lastBody["first_token_ms"] != float64(480) {
 		t.Fatalf("first_token_ms = %v, want 480: %+v", srv.lastBody["first_token_ms"], srv.lastBody)
+	}
+}
+
+func TestReportSuccessIncludesEffectiveRequestType(t *testing.T) {
+	srv := newReportCaptureServer(t)
+	subPilotClientSingleton = NewSubPilotClient()
+	cfg := &config.Config{Gateway: config.GatewayConfig{SubPilot: config.SubPilotConfig{Enabled: true, BaseURL: srv.URL, TimeoutMS: 500}}}
+
+	groupID := int64(1)
+	duration := 28000
+	usageLog := &UsageLog{
+		RequestID:   "req-sync-1",
+		GroupID:     &groupID,
+		Model:       "gpt-4o",
+		DurationMs:  &duration,
+		TotalCost:   0.005,
+		RequestType: RequestTypeSync,
+		Stream:      false,
+	}
+	account := &Account{ID: 7}
+
+	reportSuccessFromUsageLog(cfg, context.Background(), usageLog, account, PlatformOpenAI, usageLog.TotalCost)
+
+	if srv.lastBody["request_type"] != "sync" {
+		t.Fatalf("request_type = %v, want sync: %+v", srv.lastBody["request_type"], srv.lastBody)
+	}
+	if srv.lastBody["stream"] != false {
+		t.Fatalf("stream = %v, want false: %+v", srv.lastBody["stream"], srv.lastBody)
+	}
+	if _, ok := srv.lastBody["first_token_ms"]; ok {
+		t.Fatalf("sync report should not synthesize first_token_ms from duration: %+v", srv.lastBody)
 	}
 }
 
