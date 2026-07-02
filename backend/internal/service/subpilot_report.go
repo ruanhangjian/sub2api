@@ -23,21 +23,25 @@ type subpilotReportSuccessRequest struct {
 	Model           string  `json:"model"`
 	LatencyMS       int     `json:"latency_ms,omitempty"`
 	FirstTokenMS    int     `json:"first_token_ms,omitempty"`
+	RequestType     string  `json:"request_type,omitempty"`
+	Stream          *bool   `json:"stream,omitempty"`
 	OfficialUSDUsed float64 `json:"official_usd_used,omitempty"`
 }
 
 // subpilotReportFailureRequest 对应 SubPilot /v1/dispatch/report-failure。
 type subpilotReportFailureRequest struct {
-	RequestID     string `json:"request_id"`
-	LeaseID       string `json:"lease_id,omitempty"`
-	APIKeyID      string `json:"api_key_id,omitempty"`
-	AccountID     string `json:"account_id"`
-	Platform      string `json:"platform"`
-	GroupID       string `json:"group_id"`
-	Model         string `json:"model"`
-	StatusCode    int    `json:"status_code,omitempty"`
-	ErrorCode     string `json:"error_code,omitempty"`
-	ErrorMessage  string `json:"error_message,omitempty"`
+	RequestID    string `json:"request_id"`
+	LeaseID      string `json:"lease_id,omitempty"`
+	APIKeyID     string `json:"api_key_id,omitempty"`
+	AccountID    string `json:"account_id"`
+	Platform     string `json:"platform"`
+	GroupID      string `json:"group_id"`
+	Model        string `json:"model"`
+	StatusCode   int    `json:"status_code,omitempty"`
+	ErrorCode    string `json:"error_code,omitempty"`
+	ErrorMessage string `json:"error_message,omitempty"`
+	RequestType  string `json:"request_type,omitempty"`
+	Stream       *bool  `json:"stream,omitempty"`
 }
 
 // subpilotLeaseFromContext 从 ctx 中取出 select 阶段 SubPilot 返回的 lease_id（若有）。
@@ -209,6 +213,12 @@ func reportSuccessFromUsageLog(cfg *config.Config, ctx context.Context, usageLog
 		OfficialUSDUsed: officialUSD,
 		LeaseID:         subPilotLeaseIDFromContext(ctx),
 	}
+	requestType := usageLog.EffectiveRequestType()
+	if requestType != RequestTypeUnknown {
+		req.RequestType = requestType.String()
+	}
+	stream := usageLog.Stream
+	req.Stream = &stream
 	if usageLog.DurationMs != nil {
 		req.LatencyMS = *usageLog.DurationMs
 	}
