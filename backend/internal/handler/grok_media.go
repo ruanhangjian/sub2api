@@ -215,6 +215,7 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 		)
 
 		account := selection.Account
+		applySubPilotLease(c, selection.SubPilotLeaseID)
 		sessionHash = ensureOpenAIPoolModeSessionHash(sessionHash, account)
 		setOpsSelectedAccount(c, account.ID, account.Platform)
 
@@ -246,7 +247,7 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 		if err != nil {
 			var failoverErr *service.UpstreamFailoverError
 			if errors.As(err, &failoverErr) {
-				h.gatewayService.ReportOpenAIAccountScheduleResult(account.ID, false, nil)
+				h.gatewayService.ReportOpenAIAccountScheduleResult(account.ID, false, nil, service.SubPilotFailContext{Ctx: c.Request.Context(), GroupID: apiKey.GroupID, Model: requestModel})
 				if c.Writer.Size() != writerSizeBeforeForward {
 					h.handleFailoverExhausted(c, failoverErr, true)
 					return
@@ -285,7 +286,7 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 				)
 				continue
 			}
-			h.gatewayService.ReportOpenAIAccountScheduleResult(account.ID, false, nil)
+			h.gatewayService.ReportOpenAIAccountScheduleResult(account.ID, false, nil, service.SubPilotFailContext{Ctx: c.Request.Context(), GroupID: apiKey.GroupID, Model: requestModel})
 			if c.Writer.Size() == writerSizeBeforeForward {
 				h.errorResponse(c, http.StatusBadGateway, "upstream_error", "Upstream request failed")
 			}
@@ -296,7 +297,7 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 			return
 		}
 
-		h.gatewayService.ReportOpenAIAccountScheduleResult(account.ID, true, nil)
+		h.gatewayService.ReportOpenAIAccountScheduleResult(account.ID, true, nil, service.SubPilotFailContext{Ctx: c.Request.Context(), GroupID: apiKey.GroupID, Model: requestModel})
 		if endpoint == service.GrokMediaEndpointVideosGenerations && strings.TrimSpace(result.ResponseID) != "" {
 			if err := h.gatewayService.BindGrokMediaVideoRequestAccount(requestCtx, apiKey.GroupID, result.ResponseID, account.ID); err != nil {
 				reqLog.Warn("grok_media.bind_video_request_account_failed",
