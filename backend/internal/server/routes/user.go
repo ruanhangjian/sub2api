@@ -61,6 +61,15 @@ func RegisterUserRoutes(
 				// 敏感操作二次验证：授予当前会话一段时间的 step-up 权限
 				totp.POST("/step-up", h.Totp.StepUp)
 			}
+
+			passkeys := user.Group("/passkeys")
+			{
+				passkeys.GET("", h.Passkey.List)
+				passkeys.POST("/register/begin", h.Passkey.BeginRegistration)
+				passkeys.POST("/register/finish", h.Passkey.FinishRegistration)
+				passkeys.PATCH("/:id", h.Passkey.Rename)
+				passkeys.DELETE("/:id", h.Passkey.Delete)
+			}
 		}
 
 		// API Key管理
@@ -131,6 +140,19 @@ func RegisterUserRoutes(
 		{
 			monitors.GET("", h.ChannelMonitor.List)
 			monitors.GET("/:id/status", h.ChannelMonitor.GetStatus)
+		}
+
+		// V2 passive views require feature on + mode=v2.
+		monitorV2 := authenticated.Group("/channel-monitor-v2")
+		monitorV2.Use(panelRateLimiter.Heavy())
+		monitorV2.Use(channelMonitorModeV2Guard(settingService))
+		{
+			monitorV2.GET("/dimensions", h.ChannelMonitorV2.Dimensions)
+			monitorV2.GET("/snapshot", h.ChannelMonitorV2.Snapshot)
+			monitorV2.GET("/models", h.ChannelMonitorV2.Models)
+			monitorV2.GET("/matrix", h.ChannelMonitorV2.Matrix)
+			monitorV2.GET("/errors", h.ChannelMonitorV2.Errors)
+			monitorV2.GET("/users", h.ChannelMonitorV2.Users)
 		}
 	}
 }
