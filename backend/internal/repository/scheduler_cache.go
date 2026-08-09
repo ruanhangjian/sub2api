@@ -901,7 +901,7 @@ func filterSchedulerAccountGroups(accountGroups []service.AccountGroup) []servic
 
 	filtered := make([]service.AccountGroup, 0, len(accountGroups))
 	for _, ag := range accountGroups {
-		if ag.GroupID <= 0 {
+		if ag.GroupID <= 0 || ag.SchedulingDisabled {
 			continue
 		}
 		filtered = append(filtered, service.AccountGroup{
@@ -924,8 +924,17 @@ func filterSchedulerGroupIDs(groupIDs []int64, accountGroups []service.AccountGr
 
 	seen := make(map[int64]struct{}, len(groupIDs)+len(accountGroups))
 	filtered := make([]int64, 0, len(groupIDs)+len(accountGroups))
+	membershipEnabled := make(map[int64]bool, len(accountGroups))
+	for _, ag := range accountGroups {
+		if ag.GroupID > 0 {
+			membershipEnabled[ag.GroupID] = !ag.SchedulingDisabled
+		}
+	}
 	for _, id := range groupIDs {
 		if id <= 0 {
+			continue
+		}
+		if enabled, known := membershipEnabled[id]; known && !enabled {
 			continue
 		}
 		if _, ok := seen[id]; ok {
@@ -935,7 +944,7 @@ func filterSchedulerGroupIDs(groupIDs []int64, accountGroups []service.AccountGr
 		filtered = append(filtered, id)
 	}
 	for _, ag := range accountGroups {
-		if ag.GroupID <= 0 {
+		if ag.GroupID <= 0 || ag.SchedulingDisabled {
 			continue
 		}
 		if _, ok := seen[ag.GroupID]; ok {

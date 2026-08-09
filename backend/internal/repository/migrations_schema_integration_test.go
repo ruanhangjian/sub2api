@@ -175,6 +175,7 @@ WHERE ns.nspname = 'public'
 
 	// account_groups: created_at should be timestamptz
 	requireColumn(t, tx, "account_groups", "created_at", "timestamp with time zone", 0, false)
+	requireColumn(t, tx, "account_groups", "enabled", "boolean", 0, false)
 
 	// user_allowed_groups: created_at should be timestamptz
 	requireColumn(t, tx, "user_allowed_groups", "created_at", "timestamp with time zone", 0, false)

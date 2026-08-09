@@ -570,13 +570,16 @@ func openAIStickyAccountMatchesGroup(account *Account, groupID *int64) bool {
 	if groupID == nil {
 		return len(account.AccountGroups) == 0 && len(account.GroupIDs) == 0
 	}
+	if len(account.AccountGroups) > 0 {
+		for _, accountGroup := range account.AccountGroups {
+			if accountGroup.GroupID == *groupID {
+				return !accountGroup.SchedulingDisabled
+			}
+		}
+		return false
+	}
 	for _, accountGroupID := range account.GroupIDs {
 		if accountGroupID == *groupID {
-			return true
-		}
-	}
-	for _, accountGroup := range account.AccountGroups {
-		if accountGroup.GroupID == *groupID {
 			return true
 		}
 	}

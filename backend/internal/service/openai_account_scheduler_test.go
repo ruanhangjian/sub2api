@@ -62,6 +62,24 @@ type schedulerGroupAwareOpenAIAccountRepo struct {
 	schedulerTestOpenAIAccountRepo
 }
 
+func TestOpenAIStickyAccountMatchesGroupSchedulingState(t *testing.T) {
+	groupID := int64(7)
+
+	// Old fixtures and fallback objects omit the new field. Zero value must
+	// remain schedulable for backwards compatibility.
+	legacy := &Account{GroupIDs: []int64{groupID}, AccountGroups: []AccountGroup{{GroupID: groupID}}}
+	require.True(t, openAIStickyAccountMatchesGroup(legacy, &groupID))
+
+	paused := &Account{GroupIDs: []int64{groupID}, AccountGroups: []AccountGroup{{
+		GroupID:            groupID,
+		SchedulingDisabled: true,
+	}}}
+	require.False(t, openAIStickyAccountMatchesGroup(paused, &groupID))
+
+	groupIDsOnly := &Account{GroupIDs: []int64{groupID}}
+	require.True(t, openAIStickyAccountMatchesGroup(groupIDsOnly, &groupID), "legacy GroupIDs-only fallback remains compatible")
+}
+
 func (r schedulerGroupAwareOpenAIAccountRepo) ListSchedulableByGroupIDAndPlatform(ctx context.Context, groupID int64, platform string) ([]Account, error) {
 	var result []Account
 	for _, acc := range r.accounts {

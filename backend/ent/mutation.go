@@ -5092,6 +5092,7 @@ type AccountGroupMutation struct {
 	typ            string
 	priority       *int
 	addpriority    *int
+	enabled        *bool
 	created_at     *time.Time
 	clearedFields  map[string]struct{}
 	account        *int64
@@ -5218,6 +5219,25 @@ func (m *AccountGroupMutation) ResetPriority() {
 	m.addpriority = nil
 }
 
+// SetEnabled sets the "enabled" field.
+func (m *AccountGroupMutation) SetEnabled(b bool) {
+	m.enabled = &b
+}
+
+// Enabled returns the value of the "enabled" field in the mutation.
+func (m *AccountGroupMutation) Enabled() (r bool, exists bool) {
+	v := m.enabled
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetEnabled resets all changes to the "enabled" field.
+func (m *AccountGroupMutation) ResetEnabled() {
+	m.enabled = nil
+}
+
 // SetCreatedAt sets the "created_at" field.
 func (m *AccountGroupMutation) SetCreatedAt(t time.Time) {
 	m.created_at = &t
@@ -5325,7 +5345,7 @@ func (m *AccountGroupMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *AccountGroupMutation) Fields() []string {
-	fields := make([]string, 0, 4)
+	fields := make([]string, 0, 5)
 	if m.account != nil {
 		fields = append(fields, accountgroup.FieldAccountID)
 	}
@@ -5334,6 +5354,9 @@ func (m *AccountGroupMutation) Fields() []string {
 	}
 	if m.priority != nil {
 		fields = append(fields, accountgroup.FieldPriority)
+	}
+	if m.enabled != nil {
+		fields = append(fields, accountgroup.FieldEnabled)
 	}
 	if m.created_at != nil {
 		fields = append(fields, accountgroup.FieldCreatedAt)
@@ -5352,6 +5375,8 @@ func (m *AccountGroupMutation) Field(name string) (ent.Value, bool) {
 		return m.GroupID()
 	case accountgroup.FieldPriority:
 		return m.Priority()
+	case accountgroup.FieldEnabled:
+		return m.Enabled()
 	case accountgroup.FieldCreatedAt:
 		return m.CreatedAt()
 	}
@@ -5390,6 +5415,13 @@ func (m *AccountGroupMutation) SetField(name string, value ent.Value) error {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetPriority(v)
+		return nil
+	case accountgroup.FieldEnabled:
+		v, ok := value.(bool)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetEnabled(v)
 		return nil
 	case accountgroup.FieldCreatedAt:
 		v, ok := value.(time.Time)
@@ -5470,6 +5502,9 @@ func (m *AccountGroupMutation) ResetField(name string) error {
 		return nil
 	case accountgroup.FieldPriority:
 		m.ResetPriority()
+		return nil
+	case accountgroup.FieldEnabled:
+		m.ResetEnabled()
 		return nil
 	case accountgroup.FieldCreatedAt:
 		m.ResetCreatedAt()

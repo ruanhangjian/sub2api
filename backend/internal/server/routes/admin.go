@@ -133,13 +133,15 @@ func RegisterAdminRoutes(
 		registerAuditLogRoutes(admin, h, stepUpAuth)
 	}
 
-	// SubPilot 内部 probe endpoint：共享密钥鉴权（X-SubPilot-Secret header）。
+	// SubPilot 内部接口：共享密钥鉴权（X-SubPilot-Secret header）。
 	// 问题6：不再仅依赖 docker 内网隔离。未配置 probe_secret 时默认拒绝所有请求（401），
 	// 生产启用委托探测必须显式配置 gateway.subpilot.probe_secret，且与 SubPilot 端一致。
 	internalSubPilot := v1.Group("/internal/subpilot")
-	internalSubPilot.Use(subPilotProbeSecretMiddleware(cfg))
+	internalSubPilot.Use(subPilotSecretMiddleware(cfg))
 	{
 		internalSubPilot.POST("/probe/:id", h.Admin.Account.SubPilotProbe)
+		internalSubPilot.GET("/account-groups/:group_id/accounts/:account_id", h.Admin.GroupAccountControl.Get)
+		internalSubPilot.PUT("/account-groups/:group_id/accounts/:account_id", h.Admin.GroupAccountControl.Set)
 	}
 }
 
@@ -169,9 +171,9 @@ func registerAuditLogRoutes(admin *gin.RouterGroup, h *handler.Handlers, _ middl
 	}
 }
 
-// subPilotProbeSecretMiddleware 校验 SubPilot 内部 probe endpoint 的共享密钥。
+// subPilotSecretMiddleware 校验所有 SubPilot 内部接口的共享密钥。
 // 问题6：未配置 secret（空串）时默认拒绝；header 不匹配拒绝。常量时间比较防时序攻击。
-func subPilotProbeSecretMiddleware(cfg *config.Config) gin.HandlerFunc {
+func subPilotSecretMiddleware(cfg *config.Config) gin.HandlerFunc {
 	expected := ""
 	if cfg != nil {
 		expected = cfg.Gateway.SubPilot.ProbeSecret
@@ -383,6 +385,8 @@ func registerGroupRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 		groups.PUT("/:id/rpm-overrides", h.Admin.Group.BatchSetGroupRPMOverrides)
 		groups.DELETE("/:id/rpm-overrides", h.Admin.Group.ClearGroupRPMOverrides)
 		groups.GET("/:id/api-keys", h.Admin.Group.GetGroupAPIKeys)
+		groups.GET("/:id/accounts/:account_id/scheduling", h.Admin.GroupAccountControl.Get)
+		groups.PUT("/:id/accounts/:account_id/scheduling", h.Admin.GroupAccountControl.Set)
 	}
 }
 
