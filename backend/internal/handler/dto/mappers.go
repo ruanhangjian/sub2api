@@ -403,6 +403,7 @@ func AccountGroupFromService(ag *service.AccountGroup) *AccountGroup {
 		AccountID: ag.AccountID,
 		GroupID:   ag.GroupID,
 		Priority:  ag.Priority,
+		Enabled:   !ag.SchedulingDisabled,
 		CreatedAt: ag.CreatedAt,
 		Account:   AccountFromServiceShallow(ag.Account),
 		Group:     GroupFromServiceShallow(ag.Group),

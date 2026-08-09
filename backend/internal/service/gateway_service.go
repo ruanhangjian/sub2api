@@ -2517,7 +2517,7 @@ func (s *GatewayService) isAccountInGroup(account *Account, groupID *int64) bool
 	}
 	for _, ag := range account.AccountGroups {
 		if ag.GroupID == *groupID {
-			return true
+			return !ag.SchedulingDisabled
 		}
 	}
 	return false

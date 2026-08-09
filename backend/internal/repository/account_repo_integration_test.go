@@ -629,6 +629,30 @@ func (s *AccountRepoSuite) TestListSchedulableByGroupIDAndPlatform() {
 	s.Require().Equal(a1.ID, accounts[0].ID)
 }
 
+func (s *AccountRepoSuite) TestListSchedulableByGroupExcludesPausedMembership() {
+	group := mustCreateGroup(s.T(), s.client, &service.Group{Name: "g-paused"})
+	account := mustCreateAccount(s.T(), s.client, &service.Account{Name: "paused", Platform: service.PlatformAnthropic, Schedulable: true})
+	mustBindAccountToGroup(s.T(), s.client, account.ID, group.ID, 1)
+
+	_, err := s.client.AccountGroup.Update().
+		Where(
+			accountgroup.AccountIDEQ(account.ID),
+			accountgroup.GroupIDEQ(group.ID),
+		).
+		SetEnabled(false).
+		Save(s.ctx)
+	s.Require().NoError(err)
+
+	accounts, err := s.repo.ListSchedulableByGroupIDAndPlatform(s.ctx, group.ID, service.PlatformAnthropic)
+	s.Require().NoError(err)
+	s.Require().Empty(accounts)
+
+	loaded, err := s.repo.GetByID(s.ctx, account.ID)
+	s.Require().NoError(err)
+	s.Require().Len(loaded.AccountGroups, 1)
+	s.Require().True(loaded.AccountGroups[0].SchedulingDisabled, "paused membership must remain visible outside scheduling")
+}
+
 func (s *AccountRepoSuite) TestSetSchedulable() {
 	account := mustCreateAccount(s.T(), s.client, &service.Account{Name: "acc-sched", Schedulable: true})
 	cacheRecorder := &schedulerCacheRecorder{}
