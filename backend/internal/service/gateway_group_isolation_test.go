@@ -72,6 +72,11 @@ func TestIsAccountInGroup(t *testing.T) {
 			&Account{ID: 9, AccountGroups: []AccountGroup{{GroupID: 300}, {GroupID: 400}}},
 			&groupID100, false,
 		},
+		{
+			"with_groupID_paused_membership",
+			&Account{ID: 10, AccountGroups: []AccountGroup{{GroupID: 100, SchedulingDisabled: true}}},
+			&groupID100, false,
+		},
 		// 防御性边界
 		{
 			"nil_account_nil_groupID",

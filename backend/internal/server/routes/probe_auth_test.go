@@ -14,9 +14,33 @@ func newProbeTestRouter(cfg *config.Config) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
 	g := r.Group("/internal/subpilot")
-	g.Use(subPilotProbeSecretMiddleware(cfg))
+	g.Use(subPilotSecretMiddleware(cfg))
 	g.POST("/probe/:id", func(c *gin.Context) { c.Status(http.StatusOK) })
+	g.GET("/account-groups/:group_id/accounts/:account_id", func(c *gin.Context) { c.Status(http.StatusOK) })
+	g.PUT("/account-groups/:group_id/accounts/:account_id", func(c *gin.Context) { c.Status(http.StatusOK) })
 	return r
+}
+
+func TestSubPilotSecretProtectsGroupAccountControlEndpoints(t *testing.T) {
+	cfg := &config.Config{Gateway: config.GatewayConfig{SubPilot: config.SubPilotConfig{ProbeSecret: "s3cret"}}}
+	r := newProbeTestRouter(cfg)
+
+	for _, method := range []string{http.MethodGet, http.MethodPut} {
+		w := httptest.NewRecorder()
+		req := httptest.NewRequest(method, "/internal/subpilot/account-groups/2/accounts/1", nil)
+		r.ServeHTTP(w, req)
+		if w.Code != http.StatusUnauthorized {
+			t.Fatalf("%s without shared secret should return 401, got %d", method, w.Code)
+		}
+
+		w = httptest.NewRecorder()
+		req = httptest.NewRequest(method, "/internal/subpilot/account-groups/2/accounts/1", nil)
+		req.Header.Set("X-SubPilot-Secret", "s3cret")
+		r.ServeHTTP(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("%s with shared secret should pass, got %d", method, w.Code)
+		}
+	}
 }
 
 // TestProbeSecretRejectsWhenUnconfigured 证明问题6 安全要求：

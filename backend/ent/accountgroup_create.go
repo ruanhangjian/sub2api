@@ -50,6 +50,20 @@ func (_c *AccountGroupCreate) SetNillablePriority(v *int) *AccountGroupCreate {
 	return _c
 }
 
+// SetEnabled sets the "enabled" field.
+func (_c *AccountGroupCreate) SetEnabled(v bool) *AccountGroupCreate {
+	_c.mutation.SetEnabled(v)
+	return _c
+}
+
+// SetNillableEnabled sets the "enabled" field if the given value is not nil.
+func (_c *AccountGroupCreate) SetNillableEnabled(v *bool) *AccountGroupCreate {
+	if v != nil {
+		_c.SetEnabled(*v)
+	}
+	return _c
+}
+
 // SetCreatedAt sets the "created_at" field.
 func (_c *AccountGroupCreate) SetCreatedAt(v time.Time) *AccountGroupCreate {
 	_c.mutation.SetCreatedAt(v)
@@ -113,6 +127,10 @@ func (_c *AccountGroupCreate) defaults() {
 		v := accountgroup.DefaultPriority
 		_c.mutation.SetPriority(v)
 	}
+	if _, ok := _c.mutation.Enabled(); !ok {
+		v := accountgroup.DefaultEnabled
+		_c.mutation.SetEnabled(v)
+	}
 	if _, ok := _c.mutation.CreatedAt(); !ok {
 		v := accountgroup.DefaultCreatedAt()
 		_c.mutation.SetCreatedAt(v)
@@ -129,6 +147,9 @@ func (_c *AccountGroupCreate) check() error {
 	}
 	if _, ok := _c.mutation.Priority(); !ok {
 		return &ValidationError{Name: "priority", err: errors.New(`ent: missing required field "AccountGroup.priority"`)}
+	}
+	if _, ok := _c.mutation.Enabled(); !ok {
+		return &ValidationError{Name: "enabled", err: errors.New(`ent: missing required field "AccountGroup.enabled"`)}
 	}
 	if _, ok := _c.mutation.CreatedAt(); !ok {
 		return &ValidationError{Name: "created_at", err: errors.New(`ent: missing required field "AccountGroup.created_at"`)}
@@ -165,6 +186,10 @@ func (_c *AccountGroupCreate) createSpec() (*AccountGroup, *sqlgraph.CreateSpec)
 	if value, ok := _c.mutation.Priority(); ok {
 		_spec.SetField(accountgroup.FieldPriority, field.TypeInt, value)
 		_node.Priority = value
+	}
+	if value, ok := _c.mutation.Enabled(); ok {
+		_spec.SetField(accountgroup.FieldEnabled, field.TypeBool, value)
+		_node.Enabled = value
 	}
 	if value, ok := _c.mutation.CreatedAt(); ok {
 		_spec.SetField(accountgroup.FieldCreatedAt, field.TypeTime, value)
@@ -298,6 +323,18 @@ func (u *AccountGroupUpsert) AddPriority(v int) *AccountGroupUpsert {
 	return u
 }
 
+// SetEnabled sets the "enabled" field.
+func (u *AccountGroupUpsert) SetEnabled(v bool) *AccountGroupUpsert {
+	u.Set(accountgroup.FieldEnabled, v)
+	return u
+}
+
+// UpdateEnabled sets the "enabled" field to the value that was provided on create.
+func (u *AccountGroupUpsert) UpdateEnabled() *AccountGroupUpsert {
+	u.SetExcluded(accountgroup.FieldEnabled)
+	return u
+}
+
 // UpdateNewValues updates the mutable fields using the new values that were set on create.
 // Using this option is equivalent to using:
 //
@@ -389,6 +426,20 @@ func (u *AccountGroupUpsertOne) AddPriority(v int) *AccountGroupUpsertOne {
 func (u *AccountGroupUpsertOne) UpdatePriority() *AccountGroupUpsertOne {
 	return u.Update(func(s *AccountGroupUpsert) {
 		s.UpdatePriority()
+	})
+}
+
+// SetEnabled sets the "enabled" field.
+func (u *AccountGroupUpsertOne) SetEnabled(v bool) *AccountGroupUpsertOne {
+	return u.Update(func(s *AccountGroupUpsert) {
+		s.SetEnabled(v)
+	})
+}
+
+// UpdateEnabled sets the "enabled" field to the value that was provided on create.
+func (u *AccountGroupUpsertOne) UpdateEnabled() *AccountGroupUpsertOne {
+	return u.Update(func(s *AccountGroupUpsert) {
+		s.UpdateEnabled()
 	})
 }
 
@@ -626,6 +677,20 @@ func (u *AccountGroupUpsertBulk) AddPriority(v int) *AccountGroupUpsertBulk {
 func (u *AccountGroupUpsertBulk) UpdatePriority() *AccountGroupUpsertBulk {
 	return u.Update(func(s *AccountGroupUpsert) {
 		s.UpdatePriority()
+	})
+}
+
+// SetEnabled sets the "enabled" field.
+func (u *AccountGroupUpsertBulk) SetEnabled(v bool) *AccountGroupUpsertBulk {
+	return u.Update(func(s *AccountGroupUpsert) {
+		s.SetEnabled(v)
+	})
+}
+
+// UpdateEnabled sets the "enabled" field to the value that was provided on create.
+func (u *AccountGroupUpsertBulk) UpdateEnabled() *AccountGroupUpsertBulk {
+	return u.Update(func(s *AccountGroupUpsert) {
+		s.UpdateEnabled()
 	})
 }
 

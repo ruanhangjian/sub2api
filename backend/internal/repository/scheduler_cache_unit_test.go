@@ -40,7 +40,7 @@ func TestBuildSchedulerMetadataAccount_KeepsSlimGroupMembership(t *testing.T) {
 	account := service.Account{
 		ID:       42,
 		Platform: service.PlatformAnthropic,
-		GroupIDs: []int64{7, 9, 7, 0},
+		GroupIDs: []int64{7, 9, 12, 7, 0},
 		AccountGroups: []service.AccountGroup{
 			{
 				AccountID: 42,
@@ -56,9 +56,15 @@ func TestBuildSchedulerMetadataAccount_KeepsSlimGroupMembership(t *testing.T) {
 				Group:     &service.Group{ID: 11, Name: "drop-from-metadata"},
 			},
 			{
+				AccountID:          42,
+				GroupID:            12,
+				Priority:           4,
+				SchedulingDisabled: true,
+			},
+			{
 				AccountID: 42,
 				GroupID:   0,
-				Priority:  4,
+				Priority:  5,
 			},
 		},
 	}

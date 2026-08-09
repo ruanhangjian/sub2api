@@ -1523,7 +1523,10 @@ type accountGroupQueryOptions struct {
 
 func (r *accountRepository) queryAccountsByGroup(ctx context.Context, groupID int64, opts accountGroupQueryOptions) ([]service.Account, error) {
 	q := r.client.AccountGroup.Query().
-		Where(dbaccountgroup.GroupIDEQ(groupID))
+		Where(
+			dbaccountgroup.GroupIDEQ(groupID),
+			dbaccountgroup.EnabledEQ(true),
+		)
 
 	// 通过 account_groups 中间表查询账号，并按需叠加状态/平台/调度能力过滤。
 	preds := make([]dbpredicate.Account, 0, 6)
@@ -1698,11 +1701,12 @@ func (r *accountRepository) loadAccountGroups(ctx context.Context, accountIDs []
 	for _, ag := range entries {
 		groupSvc := groupEntityToService(ag.Edges.Group)
 		agSvc := service.AccountGroup{
-			AccountID: ag.AccountID,
-			GroupID:   ag.GroupID,
-			Priority:  ag.Priority,
-			CreatedAt: ag.CreatedAt,
-			Group:     groupSvc,
+			AccountID:          ag.AccountID,
+			GroupID:            ag.GroupID,
+			Priority:           ag.Priority,
+			SchedulingDisabled: !ag.Enabled,
+			CreatedAt:          ag.CreatedAt,
+			Group:              groupSvc,
 		}
 		accountGroupsByAccount[ag.AccountID] = append(accountGroupsByAccount[ag.AccountID], agSvc)
 		groupIDsByAccount[ag.AccountID] = append(groupIDsByAccount[ag.AccountID], ag.GroupID)
