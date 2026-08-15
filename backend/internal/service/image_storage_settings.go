@@ -27,8 +27,13 @@ type ImageStorageFactory func(ctx context.Context, cfg *config.ImageStorageConfi
 // ReuseBackupS3 为真时不保存自己的凭证，直接借用数据库备份已配置的 S3 端点与密钥，
 // 只用自己的 Bucket/Prefix 区分对象；这样"数据走 backups/、图片走 images/"无需重复配置。
 type ImageStorageSettings struct {
-	Enabled       bool `json:"enabled"`
-	ReuseBackupS3 bool `json:"reuse_backup_s3"`
+	Enabled                bool   `json:"enabled"`
+	ReuseBackupS3          bool   `json:"reuse_backup_s3"`
+	LocalEnabled           bool   `json:"local_enabled"`
+	LocalDirectory         string `json:"local_directory"`
+	LocalBaseURL           string `json:"local_base_url"`
+	RetentionHours         int    `json:"retention_hours"`
+	CleanupIntervalMinutes int    `json:"cleanup_interval_minutes"`
 
 	Bucket           string `json:"bucket"` // 留空且复用备份时，沿用备份桶
 	Prefix           string `json:"prefix"`
@@ -171,6 +176,7 @@ func (s *ImageStorageSettingService) Update(ctx context.Context, in ImageStorage
 		// 复用备份凭证时不落自己的密钥，避免同一份密钥在库里存两份。
 		in.Endpoint, in.Region, in.AccessKeyID, in.SecretAccessKey = "", "", "", ""
 		in.ForcePathStyle = false
+		in.LocalEnabled = false
 	} else if in.SecretAccessKey == "" {
 		if old, err := s.load(ctx); err == nil && old != nil {
 			in.SecretAccessKey = old.SecretAccessKey
@@ -240,6 +246,11 @@ func (s *ImageStorageSettingService) effectiveConfig(ctx context.Context) (*conf
 func (s *ImageStorageSettingService) toImageStorageConfig(ctx context.Context, in *ImageStorageSettings) (*config.ImageStorageConfig, error) {
 	cfg := &config.ImageStorageConfig{
 		Enabled:         in.Enabled,
+		LocalEnabled:    in.LocalEnabled,
+		LocalDirectory:  in.LocalDirectory,
+		LocalBaseURL:    in.LocalBaseURL,
+		RetentionHours:  in.RetentionHours,
+		CleanupMinutes:  in.CleanupIntervalMinutes,
 		Bucket:          in.Bucket,
 		Prefix:          in.Prefix,
 		PublicBaseURL:   in.PublicBaseURL,
@@ -306,17 +317,22 @@ func (s *ImageStorageSettingService) load(ctx context.Context) (*ImageStorageSet
 
 func settingsFromConfig(cfg config.ImageStorageConfig) *ImageStorageSettings {
 	return &ImageStorageSettings{
-		Enabled:          cfg.Enabled,
-		Bucket:           cfg.Bucket,
-		Prefix:           cfg.Prefix,
-		PublicBaseURL:    cfg.PublicBaseURL,
-		PresignExpiry:    cfg.PresignExpiry,
-		MaxDownloadBytes: cfg.MaxDownloadByte,
-		Endpoint:         cfg.Endpoint,
-		Region:           cfg.Region,
-		AccessKeyID:      cfg.AccessKeyID,
-		SecretAccessKey:  cfg.SecretAccessKey,
-		ForcePathStyle:   cfg.ForcePathStyle,
+		Enabled:                cfg.Enabled,
+		LocalEnabled:           cfg.LocalEnabled,
+		LocalDirectory:         cfg.LocalDirectory,
+		LocalBaseURL:           cfg.LocalBaseURL,
+		RetentionHours:         cfg.RetentionHours,
+		CleanupIntervalMinutes: cfg.CleanupMinutes,
+		Bucket:                 cfg.Bucket,
+		Prefix:                 cfg.Prefix,
+		PublicBaseURL:          cfg.PublicBaseURL,
+		PresignExpiry:          cfg.PresignExpiry,
+		MaxDownloadBytes:       cfg.MaxDownloadByte,
+		Endpoint:               cfg.Endpoint,
+		Region:                 cfg.Region,
+		AccessKeyID:            cfg.AccessKeyID,
+		SecretAccessKey:        cfg.SecretAccessKey,
+		ForcePathStyle:         cfg.ForcePathStyle,
 	}
 }
 
@@ -327,6 +343,8 @@ func normalizeImageStorageSettings(in *ImageStorageSettings) {
 	in.AccessKeyID = strings.TrimSpace(in.AccessKeyID)
 	in.SecretAccessKey = strings.TrimSpace(in.SecretAccessKey)
 	in.PublicBaseURL = strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(in.PublicBaseURL), "/"))
+	in.LocalDirectory = strings.TrimSpace(in.LocalDirectory)
+	in.LocalBaseURL = strings.TrimRight(strings.TrimSpace(in.LocalBaseURL), "/")
 
 	in.Prefix = strings.TrimSpace(in.Prefix)
 	if in.Prefix == "" {
@@ -343,5 +361,11 @@ func normalizeImageStorageSettings(in *ImageStorageSettings) {
 	}
 	if in.MaxDownloadBytes <= 0 {
 		in.MaxDownloadBytes = defaultImageMaxDownloadBytes
+	}
+	if in.RetentionHours <= 0 {
+		in.RetentionHours = 24
+	}
+	if in.CleanupIntervalMinutes <= 0 {
+		in.CleanupIntervalMinutes = 60
 	}
 }

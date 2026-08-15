@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"time"
 
 	entsql "entgo.io/ent/dialect/sql"
 	"github.com/Wei-Shaw/sub2api/ent"
@@ -125,7 +126,8 @@ var ProviderSet = wire.NewSet(
 	NewRedeemCache,
 	NewUpdateCache,
 	NewGeminiTokenCache,
-	NewImageTaskStore,
+	NewDurableImageTaskStore,
+	ProvideImageTaskQueue,
 	NewBatchImageQueue,
 	NewBatchImageDownloadLimiter,
 	NewLeaderLockCache,
@@ -188,7 +190,18 @@ func ProvideEnt(cfg *config.Config) (*ent.Client, error) {
 // 设置保存后重建，而不是在启动时定死一份。
 func ProvideImageStorageFactory() service.ImageStorageFactory {
 	return func(ctx context.Context, cfg *config.ImageStorageConfig) (service.ImageStorage, error) {
-		return NewS3ImageStorage(ctx, cfg)
+		if cfg != nil && cfg.S3Configured() {
+			return NewS3ImageStorage(ctx, cfg)
+		}
+		if cfg != nil && cfg.LocalEnabled {
+			return NewLocalImageStorage(
+				cfg.LocalDirectory,
+				cfg.LocalBaseURL,
+				time.Duration(cfg.RetentionHours)*time.Hour,
+				time.Duration(cfg.CleanupMinutes)*time.Minute,
+			)
+		}
+		return nil, errors.New("image storage is not configured")
 	}
 }
 

@@ -98,6 +98,7 @@ type Config struct {
 	Update                  UpdateConfig                  `mapstructure:"update"`
 	Idempotency             IdempotencyConfig             `mapstructure:"idempotency"`
 	BatchImage              BatchImageConfig              `mapstructure:"batch_image"`
+	AsyncImage              AsyncImageConfig              `mapstructure:"async_image"`
 	ImageStorage            ImageStorageConfig            `mapstructure:"image_storage"`
 }
 
@@ -231,11 +232,29 @@ type BatchImageConfig struct {
 	VertexGCSBaseURL             string `mapstructure:"vertex_gcs_base_url"`
 }
 
-// ImageStorageConfig 配置异步图片任务结果上传的 S3 兼容对象存储。
-// Enabled 同时作为异步图片任务功能的总开关：未启用或未配置完整凭证时，
-// 异步生图接口整体禁用，避免把上游返回的大 base64 结果塞进 Redis。
+// AsyncImageConfig controls the durable single-image task queue. The worker
+// limit is process-wide; account and user limits are still enforced by the
+// normal gateway path when a worker executes the request.
+type AsyncImageConfig struct {
+	Enabled                 bool   `mapstructure:"enabled"`
+	WorkerConcurrency       int    `mapstructure:"worker_concurrency"`
+	RetentionHours          int    `mapstructure:"retention_hours"`
+	CleanupIntervalMinutes  int    `mapstructure:"cleanup_interval_minutes"`
+	RecoveryIntervalSeconds int    `mapstructure:"recovery_interval_seconds"`
+	StaleProcessingMinutes  int    `mapstructure:"stale_processing_minutes"`
+	QueueReadyKey           string `mapstructure:"queue_ready_key"`
+}
+
+// ImageStorageConfig 配置异步图片任务的本地或 S3 兼容结果存储。
+// Enabled 同时作为异步图片任务的存储开关；没有可用存储时禁用提交，
+// 避免把上游返回的大 base64 结果写入 PostgreSQL 或 Redis。
 type ImageStorageConfig struct {
 	Enabled         bool   `mapstructure:"enabled"`
+	LocalEnabled    bool   `mapstructure:"local_enabled"`
+	LocalDirectory  string `mapstructure:"local_directory"`
+	LocalBaseURL    string `mapstructure:"local_base_url"`
+	RetentionHours  int    `mapstructure:"retention_hours"`
+	CleanupMinutes  int    `mapstructure:"cleanup_interval_minutes"`
 	Endpoint        string `mapstructure:"endpoint"` // e.g. https://<account_id>.r2.cloudflarestorage.com
 	Region          string `mapstructure:"region"`   // R2 用 "auto"
 	Bucket          string `mapstructure:"bucket"`
@@ -250,6 +269,10 @@ type ImageStorageConfig struct {
 
 // IsConfigured 检查对象存储必要字段是否已配置
 func (c *ImageStorageConfig) IsConfigured() bool {
+	return c.LocalEnabled || c.S3Configured()
+}
+
+func (c *ImageStorageConfig) S3Configured() bool {
 	return c.Bucket != "" && c.AccessKeyID != "" && c.SecretAccessKey != ""
 }
 
@@ -261,6 +284,9 @@ func (c *ImageStorageConfig) Active() bool {
 // MissingCredentialKeys 返回 IsConfigured 所缺的配置键名。
 // 用于启动日志：只说"凭证不完整"会让运维以为自己漏填了，而实际可能是值填了却没被读到。
 func (c *ImageStorageConfig) MissingCredentialKeys() []string {
+	if c.LocalEnabled {
+		return nil
+	}
 	var missing []string
 	if c.Bucket == "" {
 		missing = append(missing, "image_storage.bucket")
@@ -2160,8 +2186,23 @@ func setDefaults() {
 	viper.SetDefault("batch_image.vertex_batch_prediction_base_url", "")
 	viper.SetDefault("batch_image.vertex_gcs_base_url", "")
 
-	// Image storage (async image task result offload to S3-compatible object storage)
-	viper.SetDefault("image_storage.enabled", false)
+	// Durable asynchronous single-image generation.
+	viper.SetDefault("async_image.enabled", true)
+	viper.SetDefault("async_image.worker_concurrency", 60)
+	viper.SetDefault("async_image.retention_hours", 24)
+	viper.SetDefault("async_image.cleanup_interval_minutes", 60)
+	viper.SetDefault("async_image.recovery_interval_seconds", 30)
+	viper.SetDefault("async_image.stale_processing_minutes", 35)
+	viper.SetDefault("async_image.queue_ready_key", "image_task:queue:ready")
+
+	// Image storage. Local storage is the zero-configuration default; S3 remains
+	// available and takes precedence when complete credentials are configured.
+	viper.SetDefault("image_storage.enabled", true)
+	viper.SetDefault("image_storage.local_enabled", true)
+	viper.SetDefault("image_storage.local_directory", "./data/image-storage")
+	viper.SetDefault("image_storage.local_base_url", "/v1/images/tasks")
+	viper.SetDefault("image_storage.retention_hours", 24)
+	viper.SetDefault("image_storage.cleanup_interval_minutes", 60)
 	viper.SetDefault("image_storage.region", "auto")
 	viper.SetDefault("image_storage.prefix", "images/")
 	viper.SetDefault("image_storage.force_path_style", false)
@@ -3017,6 +3058,26 @@ func (c *Config) Validate() error {
 		}
 		if c.BatchImage.RecoverLimit <= 0 {
 			return fmt.Errorf("batch_image.recover_limit must be positive")
+		}
+	}
+	if c.AsyncImage.Enabled {
+		if c.AsyncImage.WorkerConcurrency <= 0 {
+			return fmt.Errorf("async_image.worker_concurrency must be positive")
+		}
+		if c.AsyncImage.RetentionHours <= 0 {
+			return fmt.Errorf("async_image.retention_hours must be positive")
+		}
+		if c.AsyncImage.CleanupIntervalMinutes <= 0 {
+			return fmt.Errorf("async_image.cleanup_interval_minutes must be positive")
+		}
+		if c.AsyncImage.RecoveryIntervalSeconds <= 0 {
+			return fmt.Errorf("async_image.recovery_interval_seconds must be positive")
+		}
+		if c.AsyncImage.StaleProcessingMinutes <= 0 {
+			return fmt.Errorf("async_image.stale_processing_minutes must be positive")
+		}
+		if strings.TrimSpace(c.AsyncImage.QueueReadyKey) == "" {
+			return fmt.Errorf("async_image.queue_ready_key must not be empty")
 		}
 	}
 	if c.BatchImage.VertexEnabled {

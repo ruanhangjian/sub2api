@@ -9,6 +9,7 @@ import (
 	"io"
 	"mime"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -25,6 +26,16 @@ type ImageStorage interface {
 	// Save 把 data 以 key 存入对象存储，返回可下载的 URL（公开直链或 presigned 临时链接）。
 	// contentType 为图片 MIME 类型，如 "image/png"。
 	Save(ctx context.Context, key, contentType string, data []byte) (url string, err error)
+}
+
+type ImageStoredFile struct {
+	Reader  io.ReadSeekCloser
+	Name    string
+	ModTime time.Time
+}
+
+type ImageStorageReader interface {
+	Open(ctx context.Context, key string) (*ImageStoredFile, error)
 }
 
 // ImageResultUploader 是 ImageStorage 的上层编排器（与具体厂商无关）：
@@ -70,8 +81,7 @@ func (u *ImageResultUploader) Rewrite(ctx context.Context, taskID string, result
 	}
 	rawData, ok := top["data"]
 	if !ok {
-		// 没有 data 数组（结构不符合预期），保持原样返回，交由上层决定。
-		return result, nil
+		return u.rewriteNestedImages(ctx, taskID, result)
 	}
 	var items []map[string]json.RawMessage
 	if err := json.Unmarshal(rawData, &items); err != nil {
@@ -108,6 +118,121 @@ func (u *ImageResultUploader) Rewrite(ctx context.Context, taskID string, result
 		return nil, fmt.Errorf("encode image response: %w", err)
 	}
 	return out, nil
+}
+
+var markdownImageDataURL = regexp.MustCompile(`data:(image/(?:png|jpeg|jpg|webp|gif));base64,([A-Za-z0-9+/=]+)`)
+
+func (u *ImageResultUploader) rewriteNestedImages(ctx context.Context, taskID string, result json.RawMessage) (json.RawMessage, error) {
+	var value any
+	decoder := json.NewDecoder(strings.NewReader(string(result)))
+	decoder.UseNumber()
+	if err := decoder.Decode(&value); err != nil {
+		return nil, err
+	}
+	index := 0
+	rewritten, changed, err := u.rewriteImageValue(ctx, taskID, value, &index)
+	if err != nil {
+		return nil, err
+	}
+	if !changed {
+		return result, nil
+	}
+	return json.Marshal(rewritten)
+}
+
+func (u *ImageResultUploader) rewriteImageValue(ctx context.Context, taskID string, value any, index *int) (any, bool, error) {
+	switch current := value.(type) {
+	case map[string]any:
+		for _, key := range []string{"inlineData", "inline_data"} {
+			raw, ok := current[key].(map[string]any)
+			if !ok {
+				continue
+			}
+			mimeType, _ := raw["mimeType"].(string)
+			if mimeType == "" {
+				mimeType, _ = raw["mime_type"].(string)
+			}
+			dataText, _ := raw["data"].(string)
+			if !strings.HasPrefix(strings.ToLower(mimeType), "image/") || strings.TrimSpace(dataText) == "" {
+				continue
+			}
+			data, err := base64.StdEncoding.DecodeString(dataText)
+			if err != nil {
+				return nil, false, fmt.Errorf("decode Gemini inline image: %w", err)
+			}
+			url, err := u.saveImage(ctx, taskID, *index, mimeType, data)
+			if err != nil {
+				return nil, false, err
+			}
+			(*index)++
+			delete(current, key)
+			current["fileData"] = map[string]any{"mimeType": mimeType, "fileUri": url}
+			return current, true, nil
+		}
+		changed := false
+		for key, child := range current {
+			next, childChanged, err := u.rewriteImageValue(ctx, taskID, child, index)
+			if err != nil {
+				return nil, false, err
+			}
+			if childChanged {
+				current[key], changed = next, true
+			}
+		}
+		return current, changed, nil
+	case []any:
+		changed := false
+		for i, child := range current {
+			next, childChanged, err := u.rewriteImageValue(ctx, taskID, child, index)
+			if err != nil {
+				return nil, false, err
+			}
+			if childChanged {
+				current[i], changed = next, true
+			}
+		}
+		return current, changed, nil
+	case string:
+		changed := false
+		var replaceErr error
+		replaced := markdownImageDataURL.ReplaceAllStringFunc(current, func(raw string) string {
+			if replaceErr != nil {
+				return raw
+			}
+			parts := markdownImageDataURL.FindStringSubmatch(raw)
+			if len(parts) != 3 {
+				return raw
+			}
+			data, err := base64.StdEncoding.DecodeString(parts[2])
+			if err != nil {
+				replaceErr = err
+				return raw
+			}
+			url, err := u.saveImage(ctx, taskID, *index, parts[1], data)
+			if err != nil {
+				replaceErr = err
+				return raw
+			}
+			(*index)++
+			changed = true
+			return url
+		})
+		if replaceErr != nil {
+			return nil, false, replaceErr
+		}
+		return replaced, changed, nil
+	default:
+		return value, false, nil
+	}
+}
+
+func (u *ImageResultUploader) saveImage(ctx context.Context, taskID string, index int, contentType string, data []byte) (string, error) {
+	key := u.buildKey(taskID, index, contentType)
+	url, err := u.storage.Save(ctx, key, contentType, data)
+	if err != nil {
+		return "", fmt.Errorf("image %d: store image: %w", index, err)
+	}
+	return url, nil
 }
 
 func (u *ImageResultUploader) fetchImageBytes(ctx context.Context, item map[string]json.RawMessage) ([]byte, string, error) {
@@ -223,7 +348,29 @@ func (u *ImageResultUploader) download(ctx context.Context, rawURL string) ([]by
 }
 
 func (u *ImageResultUploader) buildKey(taskID string, index int, contentType string) string {
-	return u.prefix + taskID + "-" + strconv.Itoa(index) + extensionForContentType(contentType)
+	prefix := strings.TrimRight(u.prefix, "/")
+	if prefix != "" {
+		prefix += "/"
+	}
+	return prefix + taskID + "/" + strconv.Itoa(index) + extensionForContentType(contentType)
+}
+
+func (u *ImageResultUploader) Open(ctx context.Context, taskID, filename string) (*ImageStoredFile, error) {
+	if u == nil || u.storage == nil {
+		return nil, errors.New("image storage is unavailable")
+	}
+	reader, ok := u.storage.(ImageStorageReader)
+	if !ok {
+		return nil, errors.New("image storage does not support authenticated reads")
+	}
+	if strings.Contains(taskID, "/") || strings.Contains(filename, "/") || strings.Contains(filename, "\\") || taskID == "" || filename == "" {
+		return nil, errors.New("invalid image file path")
+	}
+	prefix := strings.TrimRight(u.prefix, "/")
+	if prefix != "" {
+		prefix += "/"
+	}
+	return reader.Open(ctx, prefix+taskID+"/"+filename)
 }
 
 func detectImageContentType(data []byte) string {

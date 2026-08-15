@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -10,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/config"
 	middleware2 "github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/gin-gonic/gin"
@@ -142,4 +144,181 @@ func TestAsyncImageHandlerDisabledReturns404(t *testing.T) {
 
 	// No task was created / persisted.
 	require.Empty(t, store.tasks)
+}
+
+func TestAsyncImageSubmissionTargetsAllImagePlatforms(t *testing.T) {
+	h := NewAsyncImageHandler(nil, nil)
+	tests := []struct {
+		name, platform, body, wantTarget, wantPath, wantModel, wantSize string
+	}{
+		{name: "OpenAI", platform: service.PlatformOpenAI, body: `{"model":"gpt-image-2","size":"2048x2048","n":2}`, wantTarget: "openai_images", wantPath: "/v1/images/generations", wantModel: "gpt-image-2", wantSize: "2K"},
+		{name: "Grok", platform: service.PlatformGrok, body: `{"model":"grok-imagine-image","size":"1024x1024"}`, wantTarget: "grok_images", wantPath: "/v1/images/generations", wantModel: "grok-imagine-image", wantSize: "1K"},
+		{name: "Gemini chat", platform: service.PlatformGemini, body: `{"model":"gemini-3.1-flash-image","messages":[{"role":"user","content":"draw"}],"generationConfig":{"imageConfig":{"imageSize":"4K"}}}`, wantTarget: "gemini_chat", wantPath: "/v1/chat/completions", wantModel: "gemini-3.1-flash-image", wantSize: "4K"},
+		{name: "Gemini native", platform: service.PlatformGemini, body: `{"model":"gemini-3-pro-image","contents":[{"parts":[{"text":"draw"}]}]}`, wantTarget: "gemini_native", wantPath: "/v1beta/models/gemini-3-pro-image:generateContent", wantModel: "gemini-3-pro-image", wantSize: "2K"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, "/v1/images/generations/async", strings.NewReader(tt.body))
+			req.Header.Set("Content-Type", "application/json")
+			c, _ := gin.CreateTestContext(httptest.NewRecorder())
+			c.Request = req
+			got, err := h.parseSubmission(c, tt.platform, []byte(tt.body))
+			require.NoError(t, err)
+			require.Equal(t, tt.wantTarget, got.Target)
+			require.Equal(t, tt.wantPath, got.Path)
+			require.Equal(t, tt.wantModel, got.Model)
+			require.Equal(t, tt.wantSize, got.Size)
+			if tt.wantTarget == "gemini_native" {
+				require.NotContains(t, string(got.Body), `"model"`)
+			}
+		})
+	}
+}
+
+func TestAsyncImagePersistentWorkerUsesOriginalGatewayRouteOnce(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	tests := []struct {
+		name string
+		path string
+		body string
+	}{
+		{name: "OpenAI", path: "/v1/images/generations", body: `{"model":"gpt-image-2","size":"1024x1024"}`},
+		{name: "Grok", path: "/v1/images/generations", body: `{"model":"grok-imagine-image","size":"2048x2048"}`},
+		{name: "Gemini chat", path: "/v1/chat/completions", body: `{"model":"gemini-3.1-flash-image","messages":[{"role":"user","content":"draw"}]}`},
+		{name: "Gemini native", path: "/v1beta/models/gemini-3-pro-image:generateContent", body: `{"contents":[{"parts":[{"text":"draw"}]}]}`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store := &asyncImageMemoryStore{tasks: make(map[string]*service.ImageTaskRecord)}
+			tasks := service.NewImageTaskServiceWithUploader(store, nil, time.Hour, time.Minute)
+			created, err := tasks.Create(context.Background(), service.ImageTaskOwner{UserID: 7, APIKeyID: 9})
+			require.NoError(t, err)
+
+			calls := 0
+			router := gin.New()
+			router.POST(tt.path, func(c *gin.Context) {
+				calls++
+				require.Equal(t, "Bearer sk-worker-test", c.GetHeader("Authorization"))
+				requestBody, readErr := io.ReadAll(c.Request.Body)
+				require.NoError(t, readErr)
+				require.JSONEq(t, tt.body, string(requestBody))
+				c.JSON(http.StatusOK, gin.H{"data": []gin.H{{"url": "https://example.test/image.png"}}})
+			})
+
+			h := NewAsyncImageHandler(tasks, nil)
+			h.lookup = func(_ context.Context, id int64) (*service.APIKey, error) {
+				require.Equal(t, int64(9), id)
+				return &service.APIKey{ID: id, UserID: 7, Key: "sk-worker-test"}, nil
+			}
+			h.AttachEngine(router)
+			h.executePersistentTask(context.Background(), &service.ImageTaskRecord{
+				ID: created.ID, UserID: 7, APIKeyID: 9, Method: http.MethodPost,
+				RequestPath: tt.path, ContentType: "application/json", RequestBody: []byte(tt.body),
+			})
+
+			require.Equal(t, 1, calls, "one task must enter the original gateway exactly once")
+			got, err := tasks.Get(context.Background(), service.ImageTaskOwner{UserID: 7, APIKeyID: 9}, created.ID)
+			require.NoError(t, err)
+			require.Equal(t, service.ImageTaskStatusCompleted, got.Status)
+		})
+	}
+}
+
+type blockingAsyncImageQueue struct {
+	mu      sync.Mutex
+	entered int
+	release chan struct{}
+}
+
+func (*blockingAsyncImageQueue) Enqueue(context.Context, string) error { return nil }
+
+func (q *blockingAsyncImageQueue) Reserve(ctx context.Context, _ time.Duration) (string, error) {
+	q.mu.Lock()
+	q.entered++
+	q.mu.Unlock()
+	select {
+	case <-ctx.Done():
+		return "", ctx.Err()
+	case <-q.release:
+		return "", service.ErrImageTaskQueueEmpty
+	}
+}
+
+type emptyDurableImageTaskStore struct{ *asyncImageMemoryStore }
+
+func (*emptyDurableImageTaskStore) Create(context.Context, *service.ImageTaskRecord) error {
+	return nil
+}
+func (*emptyDurableImageTaskStore) GetByIdempotencyKey(context.Context, service.ImageTaskOwner, string) (*service.ImageTaskRecord, error) {
+	return nil, service.ErrImageTaskNotFound
+}
+func (*emptyDurableImageTaskStore) ClaimQueued(context.Context, string) (*service.ImageTaskRecord, error) {
+	return nil, service.ErrImageTaskNotFound
+}
+func (*emptyDurableImageTaskStore) MarkQueued(context.Context, string) error { return nil }
+func (*emptyDurableImageTaskStore) MarkHoldReleased(context.Context, string, time.Time) error {
+	return nil
+}
+func (*emptyDurableImageTaskStore) ListQueued(context.Context, int) ([]string, error) {
+	return nil, nil
+}
+func (*emptyDurableImageTaskStore) ListUnreleasedTerminalHolds(context.Context, int) ([]*service.ImageTaskRecord, error) {
+	return nil, nil
+}
+func (*emptyDurableImageTaskStore) FailStalePending(context.Context, time.Time, json.RawMessage) ([]*service.ImageTaskRecord, error) {
+	return nil, nil
+}
+func (*emptyDurableImageTaskStore) FailStaleProcessing(context.Context, time.Time, json.RawMessage) ([]*service.ImageTaskRecord, error) {
+	return nil, nil
+}
+func (*emptyDurableImageTaskStore) DeleteExpired(context.Context, time.Time, int) (int, error) {
+	return 0, nil
+}
+
+func TestAsyncImageRuntimeStartsConfiguredWorkerConcurrency(t *testing.T) {
+	store := &emptyDurableImageTaskStore{asyncImageMemoryStore: &asyncImageMemoryStore{tasks: make(map[string]*service.ImageTaskRecord)}}
+	queue := &blockingAsyncImageQueue{release: make(chan struct{})}
+	tasks := service.NewDurableImageTaskService(store, queue, nil, nil, nil, nil, nil, func() (*service.ImageResultUploader, bool) {
+		return nil, true
+	}, time.Hour, time.Minute)
+	h := &AsyncImageHandler{tasks: tasks, cfg: &config.Config{AsyncImage: config.AsyncImageConfig{
+		WorkerConcurrency: 60, RecoveryIntervalSeconds: 3600, CleanupIntervalMinutes: 60, StaleProcessingMinutes: 35,
+	}}}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	h.runRuntime(ctx)
+	require.Eventually(t, func() bool {
+		queue.mu.Lock()
+		defer queue.mu.Unlock()
+		return queue.entered == 60
+	}, time.Second, 10*time.Millisecond)
+	cancel()
+}
+
+func TestAsyncImagePersistentWorkerStoresGatewayFailure(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	store := &asyncImageMemoryStore{tasks: make(map[string]*service.ImageTaskRecord)}
+	tasks := service.NewImageTaskServiceWithUploader(store, nil, time.Hour, time.Minute)
+	created, err := tasks.Create(context.Background(), service.ImageTaskOwner{UserID: 7, APIKeyID: 9})
+	require.NoError(t, err)
+
+	router := gin.New()
+	router.POST("/v1/images/generations", func(c *gin.Context) {
+		c.JSON(http.StatusBadGateway, gin.H{"error": gin.H{"type": "upstream_error", "message": "mock failure"}})
+	})
+	h := NewAsyncImageHandler(tasks, nil)
+	h.lookup = func(context.Context, int64) (*service.APIKey, error) {
+		return &service.APIKey{ID: 9, UserID: 7, Key: "sk-worker-test"}, nil
+	}
+	h.AttachEngine(router)
+	h.executePersistentTask(context.Background(), &service.ImageTaskRecord{
+		ID: created.ID, UserID: 7, APIKeyID: 9, Method: http.MethodPost,
+		RequestPath: "/v1/images/generations", ContentType: "application/json", RequestBody: []byte(`{"model":"gpt-image-2"}`),
+	})
+
+	got, err := tasks.Get(context.Background(), service.ImageTaskOwner{UserID: 7, APIKeyID: 9}, created.ID)
+	require.NoError(t, err)
+	require.Equal(t, service.ImageTaskStatusFailed, got.Status)
+	require.Equal(t, http.StatusBadGateway, got.HTTPStatus)
+	require.Contains(t, string(got.Error), "mock failure")
 }

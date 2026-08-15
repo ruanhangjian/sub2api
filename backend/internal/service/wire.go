@@ -611,11 +611,20 @@ func ProvideImageStorageSettingService(
 
 // ProvideImageTaskService 构造异步图片任务服务。
 //
-// 对象存储是异步图片任务的启用前提：仅当开关打开且凭证齐全时功能才可用，否则整体禁用
-// （handler 返回 404，不创建任务、不写 Redis），从而避免大 base64 结果撑爆 Redis。
+// 结果存储是异步图片任务的启用前提；本地存储或 S3 至少一项可用时才接收新任务。
 // 启用状态由 settings 服务在运行时解析，因此后台改开关后无需重启即可生效。
-func ProvideImageTaskService(store ImageTaskStore, settings *ImageStorageSettingService) *ImageTaskService {
-	return NewImageTaskServiceWithResolver(store, settings.Resolver(), defaultImageTaskTTL, defaultImageTaskExecutionTimeout)
+func ProvideImageTaskService(
+	store DurableImageTaskStore,
+	queue ImageTaskQueue,
+	billingRepo UsageBillingRepository,
+	authCache APIKeyAuthCacheInvalidator,
+	billingService *BillingService,
+	userGroupRateRepo UserGroupRateRepository,
+	settings *ImageStorageSettingService,
+	cfg *config.Config,
+) *ImageTaskService {
+	ttl := time.Duration(cfg.AsyncImage.RetentionHours) * time.Hour
+	return NewDurableImageTaskService(store, queue, billingRepo, authCache, billingService, userGroupRateRepo, cfg, settings.Resolver(), ttl, defaultImageTaskExecutionTimeout)
 }
 
 // ProvideBackupService creates and starts BackupService

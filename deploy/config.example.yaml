@@ -1286,22 +1286,30 @@ update:
   proxy_url: ""
 
 # =============================================================================
-# Image Storage (异步图片任务结果对象存储)
+# Durable Async Image Tasks (可恢复异步生图)
 # =============================================================================
 # 长耗时生图套 Cloudflare 会 524 超时，异步图片任务接口（/v1/images/generations/async
 # 等）先返回 task_id，再由客户端轮询 /v1/images/tasks/{task_id} 获取结果。
 #
-# 这里配置一个 S3 兼容对象存储（AWS S3 / Cloudflare R2 / 阿里云 OSS / MinIO 等），
-# 任务完成后把生成的图片上传到对象存储，只在 Redis 存一个短链接，避免 gpt-image-1 等
-# 返回的大 base64 结果把 Redis 撑爆。
-#
-# enabled 同时是异步图片任务功能的总开关：为 false 或凭证未配全时，异步生图接口
-# 整体返回 404、不创建任务、不写 Redis。
-#
-# 换其它厂商对象存储：只要它兼容 S3 API 即可直接用；如需完全自定义，实现
-# service.ImageStorage 接口（Save(ctx, key, contentType, data) -> url）即可。
+# 任务状态落 PostgreSQL，Redis 只做 ready 队列；服务重启会恢复 queued 任务。
+async_image:
+  enabled: true
+  worker_concurrency: 60
+  retention_hours: 24
+  cleanup_interval_minutes: 60
+  recovery_interval_seconds: 30
+  stale_processing_minutes: 35
+  queue_ready_key: "image_task:queue:ready"
+
+# 默认本地落盘到 /app/data/image-storage（Docker 挂载后在宿主机 data 目录）。
+# 如填写完整 S3 凭证，S3 优先于本地存储。
 image_storage:
-  enabled: false
+  enabled: true
+  local_enabled: true
+  local_directory: "./data/image-storage"
+  local_base_url: "/v1/images/tasks"
+  retention_hours: 24
+  cleanup_interval_minutes: 60
   # S3 兼容端点。AWS 官方可留空；R2 形如 https://<account_id>.r2.cloudflarestorage.com
   endpoint: ""
   # 区域。Cloudflare R2 用 "auto"

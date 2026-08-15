@@ -10,15 +10,18 @@ The authenticated gateway exposes both `/v1` paths and their existing no-prefix 
 POST /v1/images/generations/async
 POST /v1/images/edits/async
 GET  /v1/images/tasks/{task_id}
+GET  /v1/images/tasks/{task_id}/files/{filename}
 ```
 
 The aliases are `/images/generations/async`, `/images/edits/async`, and `/images/tasks/{task_id}`.
 
-Only OpenAI and Grok groups are supported. Requests use the same JSON or multipart payload as the corresponding synchronous endpoint. Streaming image requests are rejected because a polled task returns one final JSON result.
+OpenAI, Grok, and Gemini groups are supported. OpenAI/Grok requests use the same JSON or multipart payload as the corresponding Images endpoint. Gemini accepts either an OpenAI Chat Completions image request (`model` + `messages`) or a native Gemini request (`model` + `contents`). Streaming requests are rejected because a polled task returns one final JSON result.
 
-## Enabling the feature (object storage)
+## Durable execution and storage
 
-Asynchronous image tasks are **disabled by default** and gated on object storage. When the switch is off — or the S3 credentials are incomplete — the async endpoints return `404` and never create a task or write to Redis. This is deliberate: without offloading, large `b64_json` results (several MB each, e.g. `gpt-image-1`) would accumulate in Redis and exhaust its memory.
+Asynchronous image tasks are enabled by default. PostgreSQL is the source of truth for task state and request snapshots; Redis is only the ready queue. The runtime starts 60 workers by default, restores queued work after a restart, and deliberately does not replay an interrupted `processing` task because the upstream may already have accepted it.
+
+Generated image bytes never enter PostgreSQL or Redis. Local storage under `./data/image-storage` is the zero-configuration default. Files and task records are retained for 24 hours and cleaned every hour. Complete S3 credentials take precedence when configured.
 
 ### From the admin UI (recommended)
 
@@ -34,11 +37,23 @@ Turning the switch off stops new submissions but keeps already-accepted tasks po
 
 The admin setting takes precedence. When nothing has ever been saved there, the `image_storage` block in `config.yaml` is used instead, so deployments that enabled the feature before the admin UI existed keep working untouched.
 
-Configure an S3-compatible object store (AWS S3, Cloudflare R2, Aliyun OSS, MinIO, …) in `config.yaml` (all keys also accept the `IMAGE_STORAGE_*` environment overrides):
+The default configuration is:
 
 ```yaml
+async_image:
+  enabled: true
+  worker_concurrency: 60
+  retention_hours: 24
+  cleanup_interval_minutes: 60
+
 image_storage:
   enabled: true
+  local_enabled: true
+  local_directory: "./data/image-storage"
+  local_base_url: "/v1/images/tasks"
+  retention_hours: 24
+  cleanup_interval_minutes: 60
+  # Optional S3-compatible storage; complete credentials make S3 take priority.
   endpoint: "https://<account_id>.r2.cloudflarestorage.com"  # AWS 官方可留空
   region: "auto"
   bucket: "my-images"
@@ -51,13 +66,13 @@ image_storage:
   max_download_bytes: 33554432     # cap when re-hosting an upstream image URL (32MB)
 ```
 
-When a task completes, each generated image is uploaded to the bucket and the result is rewritten to a compact form: `data[].url` points at the stored object (a permanent `public_base_url/key` link, or a time-limited presigned URL) and `b64_json` is removed. Only this small JSON is stored in Redis. If an upload fails, the task is marked `failed` rather than persisting the raw base64.
+When a task completes, each generated image is written to the selected storage and the result is rewritten to a compact form. OpenAI `b64_json`, Gemini native `inlineData`, and Gemini Chat markdown data URLs are all replaced by stored URLs. Only the compact JSON is persisted. If storage fails, the task is marked `failed` rather than persisting raw base64.
 
 To support a different vendor beyond the S3-compatible client, implement the `service.ImageStorage` interface (`Save(ctx, key, contentType, data) (url, error)`) and provide it in place of the S3 implementation.
 
 ### Troubleshooting: the endpoints return 404 after enabling
 
-`404 async image tasks are not enabled` means `image_storage` did not resolve to a complete configuration, so the feature stayed off. The route exists either way — the 404 comes from the handler, not from an unregistered path, which makes it easy to mistake for a missing build.
+`404 async image tasks are not enabled` means `async_image.enabled`/`image_storage.enabled` is off, or neither local nor S3 storage resolved successfully. The route exists either way; the 404 comes from the handler.
 
 Check the startup log for:
 
@@ -69,7 +84,7 @@ WARN image_storage.enabled is true but object storage is not fully configured; a
 
 Note that releases **before v0.1.161 silently dropped `IMAGE_STORAGE_ENDPOINT`, `_BUCKET`, `_ACCESS_KEY_ID`, `_SECRET_ACCESS_KEY` and `_PUBLIC_BASE_URL`** when they were supplied only through the environment: those keys had no registered default, and viper cannot see an environment variable for a key it does not already know about. Deployments driven purely by `environment:` — which is what `deploy/docker-compose.yml` does by default — therefore reported `enabled: true` with empty credentials and 404'd on every async call. On an affected release the workaround is to also place the `image_storage` block in `/app/data/config.yaml` (copy it from `deploy/config.example.yaml`); once the keys exist in the file, the environment overrides apply normally.
 
-Two further causes of a 404 that are unrelated to storage: the API key's group must be on the **OpenAI or Grok** platform (any other platform, or a key with no group at all, yields `Images API is not supported for this platform`), and a task may only be polled with the **same API key that submitted it** — polling with a different key of the same user returns `image task not found` by design.
+Two further causes of a 404 that are unrelated to storage: the API key's group must be on the **OpenAI, Grok, or Gemini** platform, and a task may only be polled with the **same API key that submitted it**. Polling with a different key of the same user returns `image task not found` by design.
 
 ## Submit a task
 
@@ -84,14 +99,14 @@ curl -i https://api.example.com/v1/images/generations/async \
   }'
 ```
 
-The server stores the initial task in Redis and responds with `202 Accepted`:
+The server saves the task in PostgreSQL, freezes the estimated balance charge when applicable, enqueues it in Redis, and responds with `202 Accepted`:
 
 ```json
 {
   "id": "imgtask_0123456789abcdef",
   "task_id": "imgtask_0123456789abcdef",
   "object": "image.generation.task",
-  "status": "processing",
+  "status": "queued",
   "created_at": 1784092800,
   "expires_at": 1784179200,
   "poll_url": "/v1/images/tasks/imgtask_0123456789abcdef"
@@ -161,6 +176,8 @@ For URL responses, `image_url` mirrors the first `data[].url` for simple clients
 }
 ```
 
-All submit and poll responses include `Cache-Control: no-store`, preventing a CDN from caching the `processing` state. Tasks and results expire 24 hours after their latest state update. A task executes for at most 30 minutes.
+All submit and poll responses include `Cache-Control: no-store`, preventing a CDN from caching the queued/processing state. Tasks and results expire after 24 hours. A task executes for at most 30 minutes.
+
+The balance hold is an admission guard, not a second settlement path. It is released idempotently immediately before execution; the internal request then traverses the normal gateway route, where existing SubPilot scheduling, user/account concurrency, failover, usage recording, and actual model/count/resolution billing remain authoritative.
 
 Task ownership is scoped to both user and API key. Unknown task IDs and IDs owned by another key both return `404`, avoiding task-existence disclosure. Polling remains available when the completed generation used the key's remaining balance; normal authentication, disabled-key, user, IP, and group checks still apply.

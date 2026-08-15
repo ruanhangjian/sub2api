@@ -57,7 +57,7 @@ func TestImageResultUploaderRewritesB64JSON(t *testing.T) {
 	require.NoError(t, err)
 
 	require.Len(t, storage.saved, 1)
-	require.Equal(t, "images/imgtask_abc-0.png", storage.saved[0].key)
+	require.Equal(t, "images/imgtask_abc/0.png", storage.saved[0].key)
 	require.Equal(t, "image/png", storage.saved[0].contentType)
 	require.Equal(t, pngBytes, storage.saved[0].data)
 
@@ -66,7 +66,7 @@ func TestImageResultUploaderRewritesB64JSON(t *testing.T) {
 	}
 	require.NoError(t, json.Unmarshal(out, &parsed))
 	require.Len(t, parsed.Data, 1)
-	require.JSONEq(t, `"https://cdn.test/images/imgtask_abc-0.png"`, string(parsed.Data[0]["url"]))
+	require.JSONEq(t, `"https://cdn.test/images/imgtask_abc/0.png"`, string(parsed.Data[0]["url"]))
 	_, hasB64 := parsed.Data[0]["b64_json"]
 	require.False(t, hasB64, "b64_json must be stripped after offload")
 	require.JSONEq(t, `"a cat"`, string(parsed.Data[0]["revised_prompt"]), "unrelated fields preserved")
@@ -94,7 +94,7 @@ func TestImageResultUploaderRewritesURL(t *testing.T) {
 		Data []map[string]json.RawMessage `json:"data"`
 	}
 	require.NoError(t, json.Unmarshal(out, &parsed))
-	require.JSONEq(t, `"https://cdn.test/images/imgtask_xyz-0.png"`, string(parsed.Data[0]["url"]))
+	require.JSONEq(t, `"https://cdn.test/images/imgtask_xyz/0.png"`, string(parsed.Data[0]["url"]))
 }
 
 func TestImageResultUploaderRewritesImageDataURLWithoutHTTP(t *testing.T) {
@@ -114,13 +114,13 @@ func TestImageResultUploaderRewritesImageDataURLWithoutHTTP(t *testing.T) {
 	require.Len(t, storage.saved, 1)
 	require.Equal(t, pngBytes, storage.saved[0].data)
 	require.Equal(t, "image/png", storage.saved[0].contentType, "detected bytes take precedence over a conflicting declaration")
-	require.Equal(t, "images/imgtask_data-0.png", storage.saved[0].key)
+	require.Equal(t, "images/imgtask_data/0.png", storage.saved[0].key)
 
 	var parsed struct {
 		Data []map[string]json.RawMessage `json:"data"`
 	}
 	require.NoError(t, json.Unmarshal(out, &parsed))
-	require.JSONEq(t, `"https://cdn.test/images/imgtask_data-0.png"`, string(parsed.Data[0]["url"]))
+	require.JSONEq(t, `"https://cdn.test/images/imgtask_data/0.png"`, string(parsed.Data[0]["url"]))
 	require.JSONEq(t, `"kept"`, string(parsed.Data[0]["revised_prompt"]))
 }
 
@@ -200,6 +200,34 @@ func TestImageResultUploaderNilStoragePassthrough(t *testing.T) {
 	require.JSONEq(t, string(result), string(out))
 }
 
+func TestImageResultUploaderRewritesGeminiInlineData(t *testing.T) {
+	storage := &fakeImageStorage{}
+	uploader := NewImageResultUploader(storage, "images/", 0, nil)
+	b64 := base64.StdEncoding.EncodeToString(pngBytes)
+	result := json.RawMessage(`{"candidates":[{"content":{"parts":[{"text":"kept"},{"inlineData":{"mimeType":"image/png","data":"` + b64 + `"}}]}}]}`)
+
+	out, err := uploader.Rewrite(context.Background(), "imgtask_gemini", result)
+	require.NoError(t, err)
+	require.Len(t, storage.saved, 1)
+	require.Equal(t, "images/imgtask_gemini/0.png", storage.saved[0].key)
+	require.NotContains(t, string(out), b64)
+	require.Contains(t, string(out), `"text":"kept"`)
+	require.Contains(t, string(out), `"fileUri":"https://cdn.test/images/imgtask_gemini/0.png"`)
+}
+
+func TestImageResultUploaderRewritesGeminiChatMarkdownDataURL(t *testing.T) {
+	storage := &fakeImageStorage{}
+	uploader := NewImageResultUploader(storage, "images/", 0, nil)
+	b64 := base64.StdEncoding.EncodeToString(pngBytes)
+	result := json.RawMessage(`{"choices":[{"message":{"content":"rendered\n![image](data:image/png;base64,` + b64 + `)"}}]}`)
+
+	out, err := uploader.Rewrite(context.Background(), "imgtask_chat", result)
+	require.NoError(t, err)
+	require.Len(t, storage.saved, 1)
+	require.NotContains(t, string(out), b64)
+	require.Contains(t, string(out), `![image](https://cdn.test/images/imgtask_chat/0.png)`)
+}
+
 func TestImageTaskServiceCompleteOffloadsToStorage(t *testing.T) {
 	store := &imageTaskMemoryStore{}
 	storage := &fakeImageStorage{}
@@ -218,7 +246,7 @@ func TestImageTaskServiceCompleteOffloadsToStorage(t *testing.T) {
 	got, err := svc.Get(context.Background(), owner, created.ID)
 	require.NoError(t, err)
 	require.Equal(t, ImageTaskStatusCompleted, got.Status)
-	require.Equal(t, "https://cdn.test/images/"+created.ID+"-0.png", got.ImageURL)
+	require.Equal(t, "https://cdn.test/images/"+created.ID+"/0.png", got.ImageURL)
 	require.NotContains(t, string(got.Result), "b64_json", "large base64 must not be persisted to Redis")
 	require.Len(t, storage.saved, 1)
 }
